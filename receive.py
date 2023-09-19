@@ -1,20 +1,11 @@
-import argparse
+import os
 import subprocess
 from urllib.parse import urlparse
 
-# Argument parsing setup
-parser = argparse.ArgumentParser(
-    description="Copy data to clipboard and open URLs in Brave browser."
-)
-parser.add_argument(
-    "data",
-    type=str,
-    help="The string data to copy to clipboard and/or open in Brave if it's a URL.",
-)
-args = parser.parse_args()
+# Fetch data from environment variable
+data = os.environ.get("message", "")
 
-# Fetch data from parsed arguments
-data = args.data
+print("it worked", data)
 
 # Specify the Brave browser path
 brave_path = "/usr/bin/brave-browser-stable"
