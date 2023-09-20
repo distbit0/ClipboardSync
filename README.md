@@ -10,7 +10,9 @@ Keyboard shortcut mappings:
 `ctrl + super + s` ===> `/bin/python3 /PATH/TO/THIS/REPOSITORY/send.py CHANNEL_ID --selected`
 
 #### cronjob for receiving messages
-`@reboot ntfy sub CHANNEL_ID /PATH/TO/THIS/REPOSITORY/receive.sh`
+`@reboot ntfy sub DIFFERENT_CHANNEL_ID /PATH/TO/THIS/REPOSITORY/receive.sh`
+
+(use one channel to send and one to receive so that you do not receive messages you send on the same device)
 
 
 Install ntfy on desktop:
