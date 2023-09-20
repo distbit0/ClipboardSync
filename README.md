@@ -21,3 +21,7 @@ https://docs.ntfy.sh/install/
 Install ntfy on mobile:
 
 https://docs.ntfy.sh/
+
+
+#### Guide for automating opening handling of messages on androis (e.g. opening links or copying to clipboard)
+https://docs.ntfy.sh/subscribe/phone/
