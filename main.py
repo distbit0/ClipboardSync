@@ -1,14 +1,34 @@
 import requests
 import pyperclip
 import argparse
+import subprocess
 
 
-def send_notification_to_phone(topic_name):
-    clipboard_content = pyperclip.paste()
+def get_selected_text():
+    try:
+        selected_text = subprocess.check_output(
+            ["xclip", "-o", "-selection", "primary"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return selected_text
+    except subprocess.CalledProcessError:
+        return None
+
+
+def send_notification_to_phone(topic_name, use_selected_text=False):
+    if use_selected_text:
+        text_to_send = get_selected_text()
+        if text_to_send is None:
+            print("Failed to fetch selected text.")
+            return
+    else:
+        text_to_send = pyperclip.paste()
+
     api_url = f"http://ntfy.sh/{topic_name}"
 
     try:
-        response = requests.post(api_url, data=clipboard_content)
+        response = requests.post(api_url, data=text_to_send)
         if response.status_code == 200:
             print(f"Notification sent successfully to {topic_name}.")
         else:
@@ -20,13 +40,16 @@ def send_notification_to_phone(topic_name):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Send clipboard contents as a push notification."
-    )
+    parser = argparse.ArgumentParser(description="Send text as a push notification.")
     parser.add_argument("topic_name", help="The topic name for the push notification.")
+    parser.add_argument(
+        "--selected",
+        help="Send selected text instead of clipboard content.",
+        action="store_true",
+    )
 
     args = parser.parse_args()
-    send_notification_to_phone(args.topic_name)
+    send_notification_to_phone(args.topic_name, use_selected_text=args.selected)
 
 
 if __name__ == "__main__":
