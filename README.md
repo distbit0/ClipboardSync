@@ -25,3 +25,6 @@ https://docs.ntfy.sh/
 
 #### Guide for automating opening handling of messages on androis (e.g. opening links or copying to clipboard)
 https://docs.ntfy.sh/subscribe/phone/
+
+#### Guide for creating share target on android which sends text to ntfy api
+http://forum.joaoapps.com/index.php?resources/creating-autoshare-commands-for-your-share-menus-a-detailed-tutorial.335/
