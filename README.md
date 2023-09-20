@@ -1,7 +1,6 @@
+Works over 4g and with a VPN. Free. No account required. Uses https://ntfy.sh. Can be self hosted.
+
 Keyboard shortcut mappings:
-
-
-
 
 #### Send clipboard contents
 `ctrl + super + c` ===> `/bin/python3 /PATH/TO/THIS/REPOSITORY/send.py CHANNEL_ID`
