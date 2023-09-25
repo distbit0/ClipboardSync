@@ -28,7 +28,7 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
     api_url = f"http://ntfy.sh/{topic_name}"
 
     try:
-        response = requests.post(api_url, data=text_to_send)
+        response = requests.post(api_url, data=text_to_send.encode("utf-8"))
         if response.status_code == 200:
             print(f"Notification sent successfully to {topic_name}.")
         else:
