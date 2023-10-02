@@ -13,7 +13,16 @@ brave_path = "/usr/bin/brave-browser-stable"
 
 
 def open_in_brave(url):
-    subprocess.run([brave_path, url])
+    # Run the process and capture the output
+    subprocess.run([brave_path, url], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def copy_to_clipboard(input_string):
+    subprocess.Popen(
+        ["xclip", "-selection", "clipboard"],
+        stdin=subprocess.PIPE,
+        universal_newlines=True,
+    ).stdin.write(input_string)
 
 
 def find_urls_in_text(text):
@@ -27,13 +36,6 @@ def openUrlsInData(data):
     urls_to_open = find_urls_in_text(data)
     for url in urls_to_open:
         open_in_brave(url)
-
-
-def copy_to_clipboard(input_string):
-    process = subprocess.Popen(
-        ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE, close_fds=True
-    )
-    process.communicate(input=input_string.encode("utf-8"))
 
 
 # Copy to clipboard
