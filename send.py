@@ -26,6 +26,7 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
         text_to_send = pyperclip.paste()
 
     api_url = f"http://ntfy.sh/{topic_name}"
+    print("text to send:", text_to_send)
 
     try:
         response = requests.post(api_url, data=text_to_send.encode("utf-8"))

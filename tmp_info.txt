@@ -1,0 +1,15 @@
+Server String: /run/user/1000/pulse/native
+Library Protocol Version: 35
+Server Protocol Version: 35
+Is Local: yes
+Client Index: 700
+Tile Size: 65472
+User Name: pimania
+Host Name: fedora
+Server Name: PulseAudio (on PipeWire 0.3.82)
+Server Version: 15.0.0
+Default Sample Specification: (invalid)
+Default Channel Map: front-left,front-right
+Default Sink: bluez_output.E8_EE_CC_30_15_15.1
+Default Source: alsa_input.pci-0000_03_00.6.HiFi__hw_Generic_1__source
+Cookie: 1211:a986
