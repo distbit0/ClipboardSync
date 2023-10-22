@@ -9,7 +9,7 @@ data = os.environ.get("message", "")
 print("it worked", data)
 
 # Specify the Brave browser path
-brave_path = "/usr/bin/brave-browser-stable"
+brave_path = "xdg-open"
 
 
 def open_in_brave(url):
