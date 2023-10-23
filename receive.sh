@@ -1,5 +1,7 @@
 #!/bin/bash
-export DISPLAY=:0.0 >/dev/null 2>&1
+sleep 40;
+export XAUTHORITY=`ls  /run/user/1000/.* | grep mutt`;
+export DISPLAY=:0
 # Get the directory of the currently executing script
 script_dir="$(dirname "$0")"
 
