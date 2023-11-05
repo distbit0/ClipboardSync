@@ -11,6 +11,7 @@ def get_selected_text():
             stderr=subprocess.STDOUT,
             text=True,
         )
+        #subprocess.run(["notify-send", "Selected Text", selected_text])
         return selected_text
     except subprocess.CalledProcessError:
         return None
