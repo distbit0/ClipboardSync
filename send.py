@@ -3,6 +3,7 @@ import pyperclip
 import argparse
 import subprocess
 import io
+from urllib.parse import urlparse
 
 
 def get_selected_text():
@@ -18,7 +19,7 @@ def get_selected_text():
         return None
 
 
-def send_notification_to_phone(topic_name, use_selected_text=False, asAttachment=False):
+def send_notification_to_phone(topic_name, use_selected_text=False):
     if use_selected_text:
         text_to_send = (
             get_selected_text()
@@ -31,8 +32,8 @@ def send_notification_to_phone(topic_name, use_selected_text=False, asAttachment
 
     api_url = f"http://ntfy.sh/{topic_name}"
     headers = {}
-
-    if asAttachment:
+    textIsLink = urlparse(text_to_send).netloc != ""
+    if not textIsLink:
         # Convert the text into a byte stream
         file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
         file_like_object.name = "message.txt"  # Define a filename for the attachment
@@ -72,15 +73,11 @@ def main():
         help="Send selected text instead of clipboard content.",
         action="store_true",
     )
-    parser.add_argument(
-        "--as_attachment", help="Send as an attachment.", action="store_true"
-    )
 
     args = parser.parse_args()
     send_notification_to_phone(
         args.topic_name,
         use_selected_text=args.selected,
-        asAttachment=args.as_attachment,
     )
 
 
