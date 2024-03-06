@@ -8,7 +8,7 @@ import sys
 from utils import *
 
 sys.path.append(getConfig()["convertLinksDir"])
-from convertLinks import main
+from convertLinks import main as convertLinks
 
 
 def get_selected_text():
@@ -57,9 +57,9 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
     else:
 
         if "READ" in topic_name:
-            text_to_send = main(text_to_send, False, True)[0]
+            text_to_send = convertLinks(text_to_send, False, True)[0]
         else:
-            text_to_send = main(text_to_send, False, False)[0]
+            text_to_send = convertLinks(text_to_send, False, False)[0]
         # For non-attachment messages, just encode and send as before
         try:
             response = requests.post(api_url, data=text_to_send.encode("utf-8"))
