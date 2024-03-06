@@ -5,6 +5,10 @@ import subprocess
 import io
 from urllib.parse import urlparse
 import sys
+from utils import *
+
+sys.path.append(getConfig()["convertLinksDir"])
+from convertLinks import main
 
 
 def get_selected_text():
@@ -51,8 +55,6 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
             print(f"An exception occurred: {request_exception}")
             return
     else:
-        sys.path.append("/home/pimania/dev/convertLinks")
-        from convertLinks import main
 
         if "READ" in topic_name:
             text_to_send = main(text_to_send, False, True)[0]

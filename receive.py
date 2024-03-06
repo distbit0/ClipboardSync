@@ -3,6 +3,10 @@ import subprocess
 import re
 from urllib.parse import urlparse
 import sys
+from utils import *
+
+sys.path.append(getConfig()["convertLinksDir"])
+from convertLinks import main
 
 # Fetch data from environment variable
 data = os.environ.get("message", "")
