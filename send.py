@@ -51,11 +51,13 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
             print(f"An exception occurred: {request_exception}")
             return
     else:
-        if "READ" in topic_name:
-            sys.path.append("/home/pimania/dev/convertLinks")
-            from convertLinks import main
+        sys.path.append("/home/pimania/dev/convertLinks")
+        from convertLinks import main
 
+        if "READ" in topic_name:
             text_to_send = main(text_to_send, False, True)[0]
+        else:
+            text_to_send = main(text_to_send, False, False)[0]
         # For non-attachment messages, just encode and send as before
         try:
             response = requests.post(api_url, data=text_to_send.encode("utf-8"))
