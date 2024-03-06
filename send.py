@@ -4,6 +4,7 @@ import argparse
 import subprocess
 import io
 from urllib.parse import urlparse
+import sys
 
 
 def get_selected_text():
@@ -13,7 +14,6 @@ def get_selected_text():
             stderr=subprocess.STDOUT,
             text=True,
         )
-        # subprocess.run(["notify-send", "Selected Text", selected_text])
         return selected_text
     except subprocess.CalledProcessError:
         return None
@@ -51,6 +51,11 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
             print(f"An exception occurred: {request_exception}")
             return
     else:
+        if "READ" in topic_name:
+            sys.path.append("/home/pimania/dev/convertLinks")
+            from convertLinks import main
+
+            text_to_send = main(text_to_send, False, True)[0]
         # For non-attachment messages, just encode and send as before
         try:
             response = requests.post(api_url, data=text_to_send.encode("utf-8"))
