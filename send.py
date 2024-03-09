@@ -46,26 +46,21 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
         headers["X-Filename"] = (
             "message.txt"  # You could also use 'Filename', 'File', or 'f'
         )
-
-        # Update the POST request to include the file and headers
-        try:
-            response = requests.put(api_url, data=file_like_object, headers=headers)
-            file_like_object.close()  # Close the file-like object after sending
-        except Exception as request_exception:
-            print(f"An exception occurred: {request_exception}")
-            return
+        dataToSend = file_like_object
     else:
 
         if "READ" in topic_name:
             text_to_send = convertLinks(text_to_send, False, True)[0]
         else:
             text_to_send = convertLinks(text_to_send, False, False)[0]
-        # For non-attachment messages, just encode and send as before
-        try:
-            response = requests.post(api_url, data=text_to_send.encode("utf-8"))
-        except Exception as request_exception:
-            print(f"An exception occurred: {request_exception}")
-            return
+        dataToSend = text_to_send.encode("utf-8")
+
+    try:
+        print(f"Sending {dataToSend} to {api_url}")
+        response = requests.post(api_url, data=dataToSend, headers=headers)
+    except Exception as request_exception:
+        print(f"An exception occurred: {request_exception}")
+        return
 
     # Check the response status for both attachment and non-attachment cases
     if response.status_code == 200:
