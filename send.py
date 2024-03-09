@@ -43,12 +43,9 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
         file_like_object.name = "message.txt"  # Define a filename for the attachment
 
         # Adjust the headers to include the filename, indicating an attachment
-        headers["X-Filename"] = (
-            "message.txt"  # You could also use 'Filename', 'File', or 'f'
-        )
+        headers["X-Filename"] = "message.txt"
         dataToSend = file_like_object
     else:
-
         if "READ" in topic_name:
             text_to_send = convertLinks(text_to_send, False, True)[0]
         else:
