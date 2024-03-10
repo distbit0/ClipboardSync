@@ -5,7 +5,7 @@ import subprocess
 import io
 from urllib.parse import urlparse
 import sys
-from utils import *
+from util import *
 
 sys.path.append(getConfig()["convertLinksDir"])
 from convertLinks import main as convertLinks
