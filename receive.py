@@ -9,7 +9,7 @@ sys.path.append(getConfig()["convertLinksDir"])
 from convertLinks import main
 
 # Fetch data from environment variable
-data = "https://gist.github.com/0001c2617fd8c2729746ca032129f312"  # os.environ.get("message", "")
+data = os.environ.get("message", "")
 
 print("it worked", data)
 
