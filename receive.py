@@ -3,13 +3,13 @@ import subprocess
 import re
 from urllib.parse import urlparse
 import sys
-from utils import *
+from util import *
 
 sys.path.append(getConfig()["convertLinksDir"])
 from convertLinks import main
 
 # Fetch data from environment variable
-data = os.environ.get("message", "")
+data = "https://gist.github.com/0001c2617fd8c2729746ca032129f312"  # os.environ.get("message", "")
 
 print("it worked", data)
 
