@@ -60,7 +60,7 @@ def on_open(ws):
     print("WebSocket connection opened")
 
 
-@pysnooper.snoop()
+# @pysnooper.snoop()
 def main():
     topic = os.getenv("NTFY_RECEIVE_TOPIC")
     if not topic:
