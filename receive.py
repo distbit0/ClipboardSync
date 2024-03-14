@@ -61,7 +61,7 @@ def on_open(ws):
 
 
 # @pysnooper.snoop()
-def main():
+def lfg():
     topic = os.getenv("NTFY_RECEIVE_TOPIC")
     if not topic:
         print("Topic name not found in .env file. Please set the NTFY_TOPIC variable.")
@@ -87,4 +87,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    lfg()
