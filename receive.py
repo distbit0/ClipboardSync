@@ -37,13 +37,17 @@ def on_message(ws, message):
     data = json.loads(message)
     if "message" in data:
         message_data = data["message"]
+        print("new message: " + message_data)
         if message_data == "You received a file: attachment.txt":
             id = data.get("id", "")
+            print("id: " + id)
             if not id:
                 message_data = "No attachment found."
             else:
                 attachmentUrl = "https://ntfy.sh/file/" + id + ".txt"
                 message_data = requests.get(attachmentUrl).text
+                print("attachmentUrl: " + attachmentUrl)
+                print("message_data from attachmentUrl: " + message_data)
         copy_to_clipboard(message_data)
         main(message_data, True, False)
 

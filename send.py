@@ -36,8 +36,10 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
 
     api_url = f"http://ntfy.sh/{topic_name}"
     headers = {}
-    textIsLink = urlparse(text_to_send).netloc != ""
-    if not textIsLink:
+    textIsSingleLink = (
+        urlparse(text_to_send).netloc != "" and text_to_send.count("http") == 1
+    )
+    if not textIsSingleLink:
         # Convert the text into a byte stream
         file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
         file_like_object.name = "message.txt"  # Define a filename for the attachment
