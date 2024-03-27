@@ -18,12 +18,13 @@ from convertLinks import main
 load_dotenv()
 
 
+@pysnooper.snoop()
 def copy_to_clipboard(input_string):
-    subprocess.Popen(
-        ["xclip", "-selection", "clipboard"],
-        stdin=subprocess.PIPE,
-        universal_newlines=True,
-    ).stdin.write(input_string)
+    process = subprocess.Popen(
+        ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE, close_fds=True
+    )
+    process.communicate(input=input_string.encode())
+    return
 
 
 def find_urls_in_text(text):
@@ -33,6 +34,7 @@ def find_urls_in_text(text):
     return url_pattern.findall(text)
 
 
+@pysnooper.snoop()
 def on_message(ws, message):
     data = json.loads(message)
     if "message" in data:
@@ -64,7 +66,6 @@ def on_open(ws):
     print("WebSocket connection opened")
 
 
-# @pysnooper.snoop()
 def lfg():
     topic = os.getenv("NTFY_RECEIVE_TOPIC")
     if not topic:
