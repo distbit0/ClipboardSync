@@ -18,7 +18,7 @@ from convertLinks import main
 load_dotenv()
 
 
-@pysnooper.snoop()
+# @pysnooper.snoop()
 def copy_to_clipboard(input_string):
     process = subprocess.Popen(
         ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE, close_fds=True
@@ -34,7 +34,7 @@ def find_urls_in_text(text):
     return url_pattern.findall(text)
 
 
-@pysnooper.snoop()
+# @pysnooper.snoop()
 def on_message(ws, message):
     data = json.loads(message)
     if "message" in data:

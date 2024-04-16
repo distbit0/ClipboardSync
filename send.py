@@ -4,11 +4,14 @@ import argparse
 import subprocess
 import io
 from urllib.parse import urlparse
+from dotenv import load_dotenv
 import sys
 from util import *
 
 sys.path.append(getConfig()["convertLinksDir"])
 from convertLinks import main as convertLinks
+
+load_dotenv()
 
 
 def get_selected_text():
@@ -39,6 +42,7 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
     textIsSingleLink = (
         urlparse(text_to_send).netloc != "" and text_to_send.count("http") == 1
     )
+    print(textIsSingleLink)
     if not textIsSingleLink:
         # Convert the text into a byte stream
         file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
@@ -55,8 +59,9 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
         dataToSend = text_to_send.encode("utf-8")
 
     try:
-        print(f"Sending {dataToSend} to {api_url}")
+        print(f"Sending {text_to_send} to {api_url} with headers {str(headers)}")
         response = requests.post(api_url, data=dataToSend, headers=headers)
+        print("sent")
     except Exception as request_exception:
         print(f"An exception occurred: {request_exception}")
         return
@@ -70,7 +75,6 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Send text as a push notification.")
-    parser.add_argument("topic_name", help="The topic name for the push notification.")
     parser.add_argument(
         "--selected",
         help="Send selected text instead of clipboard content.",
@@ -79,7 +83,7 @@ def main():
 
     args = parser.parse_args()
     send_notification_to_phone(
-        args.topic_name,
+        os.getenv("topic_name"),
         use_selected_text=args.selected,
     )
 
