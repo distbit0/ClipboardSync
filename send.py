@@ -83,7 +83,7 @@ def main():
 
     args = parser.parse_args()
     send_notification_to_phone(
-        os.getenv("topic_name"),
+        os.getenv("NTFY_SEND_TOPIC"),
         use_selected_text=args.selected,
     )
 
