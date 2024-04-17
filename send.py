@@ -43,7 +43,10 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
         urlparse(text_to_send).netloc != "" and text_to_send.count("http") == 1
     )
     print(textIsSingleLink)
-    if not textIsSingleLink:
+    if textIsSingleLink:
+        text_to_send = convertLinks(text_to_send, False, True)[0]
+        dataToSend = text_to_send.encode("utf-8")
+    else:
         # Convert the text into a byte stream
         file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
         file_like_object.name = "message.txt"  # Define a filename for the attachment
@@ -51,12 +54,6 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
         # Adjust the headers to include the filename, indicating an attachment
         headers["X-Filename"] = "message.txt"
         dataToSend = file_like_object
-    else:
-        if "READ" in topic_name:
-            text_to_send = convertLinks(text_to_send, False, True)[0]
-        else:
-            text_to_send = convertLinks(text_to_send, False, False)[0]
-        dataToSend = text_to_send.encode("utf-8")
 
     try:
         print(f"Sending {text_to_send} to {api_url} with headers {str(headers)}")
