@@ -26,7 +26,7 @@ def get_selected_text():
         return None
 
 
-def send_notification_to_phone(topic_name, use_selected_text=False):
+def send_notification_to_phone(topic_name, use_selected_text, openInAtVoice):
     if use_selected_text:
         text_to_send = (
             get_selected_text()
@@ -44,7 +44,7 @@ def send_notification_to_phone(topic_name, use_selected_text=False):
     )
     print(textIsSingleLink)
     if textIsSingleLink:
-        text_to_send = convertLinks(text_to_send, False, True)[0]
+        text_to_send = convertLinks(text_to_send, False, False)[0]
         dataToSend = text_to_send.encode("utf-8")
     else:
         # Convert the text into a byte stream
@@ -77,11 +77,13 @@ def main():
         help="Send selected text instead of clipboard content.",
         action="store_true",
     )
+    parser.add_argument("--openInAtVoice", help="Open in At Voice", action="store_true")
 
     args = parser.parse_args()
     send_notification_to_phone(
         os.getenv("NTFY_SEND_TOPIC"),
-        use_selected_text=args.selected,
+        args.selected,
+        args.openInAtVoice,
     )
 
 
