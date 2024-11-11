@@ -205,7 +205,6 @@ dependencies = [
     { name = "loguru" },
     { name = "matplotlib" },
     { name = "openai" },
-    { name = "pyaudio" },
     { name = "pydub" },
     { name = "pypdf2" },
     { name = "pyperclip" },
@@ -231,7 +230,6 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.2,<0.8.0" },
     { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "openai", specifier = ">=1.54.3" },
-    { name = "pyaudio", specifier = ">=0.2.14" },
     { name = "pydub", specifier = ">=0.25.1" },
     { name = "pypdf2" },
     { name = "pyperclip", specifier = ">=1.9.0" },
@@ -708,12 +706,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/ba/e9/01f1a64245b89f039
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/f1/d6a797abb14f6283c0ddff96bbdd46937f64122b8c925cab503dd37f8214/pyasn1-0.6.1-py3-none-any.whl", hash = "sha256:0d632f46f2ba09143da3a8afe9e33fb6f92fa2320ab7e886e2d0f7672af84629", size = 83135 },
 ]
-
-[[package]]
-name = "pyaudio"
-version = "0.2.14"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/26/1d/8878c7752febb0f6716a7e1a52cb92ac98871c5aa522cba181878091607c/PyAudio-0.2.14.tar.gz", hash = "sha256:78dfff3879b4994d1f4fc6485646a57755c6ee3c19647a491f790a0895bd2f87", size = 47066 }
 
 [[package]]
 name = "pydantic"
