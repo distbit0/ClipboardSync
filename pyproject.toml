@@ -27,6 +27,8 @@ dependencies = [
     "soundcloud-lib>=0.6.1",
     "pytweettoolkit>=1.0.1",
     "websocket-client>=1.8.0",
+    "ipfs-cid>=1.0.0",
+    "youtube-transcript-api>=1.0.3",
 ]
 requires-python = ">=3.13"
 license = {text = "UNLICENCE"}
