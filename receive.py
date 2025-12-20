@@ -13,7 +13,7 @@ import pysnooper
 from dotenv import load_dotenv
 
 sys.path.append(getConfig()["convertLinksDir"])
-from convertLinks import main
+from lineate import main
 
 load_dotenv()
 

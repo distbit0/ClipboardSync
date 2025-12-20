@@ -9,7 +9,7 @@ import sys
 from util import *
 
 sys.path.append(getConfig()["convertLinksDir"])
-from convertLinks import main as convertLinks
+from lineate import main as convertLinks
 
 load_dotenv()
 
