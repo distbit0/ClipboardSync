@@ -51,7 +51,7 @@ def on_message(ws, message):
                 print("attachmentUrl: " + attachmentUrl)
                 print("message_data from attachmentUrl: " + message_data)
         copy_to_clipboard(message_data)
-        main(message_data, True, False)
+        main(message_data, True, False, forceNoConvert=True)
 
 
 def on_error(ws, error):
