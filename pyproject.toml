@@ -30,6 +30,7 @@ dependencies = [
     "ipfs-cid>=1.0.0",
     "youtube-transcript-api>=1.0.3",
     "readability-lxml>=0.8.4.1",
+    "pymupdf>=1.26.7",
 ]
 requires-python = ">=3.13"
 license = {text = "UNLICENCE"}
