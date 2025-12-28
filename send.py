@@ -44,7 +44,7 @@ def send_notification_to_phone(topic_name, use_selected_text, openInAtVoice):
     )
     print(textIsSingleLink)
     if textIsSingleLink:
-        text_to_send = convertLinks(text_to_send, False, True, True)[0]
+        text_to_send = convertLinks(text_to_send)[0]
         dataToSend = text_to_send.encode("utf-8")
     else:
         # Convert the text into a byte stream
