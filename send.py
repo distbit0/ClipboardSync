@@ -33,12 +33,19 @@ def get_selected_text():
         return None
 
 
-def convert_links_in_text(
-    text,
-):
+def _is_urls_and_whitespace_only(text, urls):
+    remaining_text = text
+    for url in urls:
+        remaining_text = remaining_text.replace(url, "")
+    return remaining_text.strip() == ""
+
+
+def convert_links_in_text(text):
     lineate.utilities.set_default_summarise(True)
     urls = lineate.find_urls_in_text(text)
     if not urls:
+        return text, []
+    if not _is_urls_and_whitespace_only(text, urls):
         return text, []
 
     converted_pairs = []
@@ -74,7 +81,10 @@ def send_notification_to_phone(topic_name, use_selected_text):
     headers = {}
     urls = lineate.find_urls_in_text(text_to_send)
     is_single_link = len(urls) == 1 and text_to_send.strip() == urls[0]
-    logger.info(f"Detected {len(urls)} url(s); single link: {is_single_link}")
+    is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls)
+    logger.info(
+        f"Detected {len(urls)} url(s); single link: {is_single_link}; urls-only: {is_urls_only}"
+    )
 
     if is_single_link:
         text_to_send = lineate.process_url(
@@ -89,14 +99,9 @@ def send_notification_to_phone(topic_name, use_selected_text):
             logger.error("Single-link conversion returned no result.")
             return
         dataToSend = text_to_send.encode("utf-8")
-    else:
+    elif is_urls_only:
         text_to_send, converted_urls = convert_links_in_text(
             text_to_send,
-            openInBrowser=False,
-            forceConvertAllUrls=True,
-            summarise=True,
-            forceNoConvert=False,
-            forceRefreshAll=False,
         )
         logger.info(f"Converted {len(converted_urls)} url(s) for attachment.")
         # Convert the text into a byte stream
@@ -104,6 +109,12 @@ def send_notification_to_phone(topic_name, use_selected_text):
         file_like_object.name = "message.txt"  # Define a filename for the attachment
 
         # Adjust the headers to include the filename, indicating an attachment
+        headers["X-Filename"] = "message.txt"
+        dataToSend = file_like_object
+    else:
+        # Non-url text present: send without conversion
+        file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
+        file_like_object.name = "message.txt"
         headers["X-Filename"] = "message.txt"
         dataToSend = file_like_object
 
