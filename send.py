@@ -41,7 +41,6 @@ def _is_urls_and_whitespace_only(text, urls):
 
 
 def convert_links_in_text(text):
-    lineate.utilities.set_default_summarise(True)
     urls = lineate.find_urls_in_text(text)
     if not urls:
         return text, []
@@ -77,6 +76,7 @@ def send_notification_to_phone(topic_name, use_selected_text):
     else:
         text_to_send = pyperclip.paste()
 
+    lineate.utilities.set_default_summarise(True)
     api_url = f"http://ntfy.sh/{topic_name}"
     headers = {}
     urls = lineate.find_urls_in_text(text_to_send)
