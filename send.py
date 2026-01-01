@@ -47,24 +47,19 @@ def convert_links_in_text(text):
     if not _is_urls_and_whitespace_only(text, urls):
         return text, []
 
-    converted_pairs = []
-    for url in urls:
-        converted_url = lineate.process_url(
-            url,
-            openInBrowser=False,
-            forceConvertAllUrls=True,
-            summarise=True,
-            forceNoConvert=False,
-            forceRefreshAll=False,
-        )
-        converted_pairs.append((url, converted_url))
+    converted_urls = lineate.main(
+        text,
+        openInBrowser=False,
+        forceConvertAllUrls=True,
+        summarise=True,
+        forceNoConvert=False,
+        forceRefreshAll=False,
+    )
+    if not converted_urls:
+        return "", []
 
-    updated_text = text
-    for original_url, converted_url in converted_pairs:
-        if converted_url and converted_url != original_url:
-            updated_text = updated_text.replace(original_url, converted_url)
-
-    return updated_text, [converted for _, converted in converted_pairs if converted]
+    converted_text = "\n".join(converted_urls)
+    return converted_text, converted_urls
 
 
 def send_notification_to_phone(topic_name, use_selected_text):
@@ -103,6 +98,9 @@ def send_notification_to_phone(topic_name, use_selected_text):
         text_to_send, converted_urls = convert_links_in_text(
             text_to_send,
         )
+        if not converted_urls:
+            logger.error("URL conversion returned no results; aborting send.")
+            return
         logger.info(f"Converted {len(converted_urls)} url(s) for attachment.")
         # Convert the text into a byte stream
         file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
