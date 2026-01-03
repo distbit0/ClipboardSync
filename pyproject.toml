@@ -28,7 +28,7 @@ dependencies = [
     "pytweettoolkit>=1.0.1",
     "websocket-client>=1.8.0",
     "ipfs-cid>=1.0.0",
-    "youtube-transcript-api>=1.0.3",
+    "youtube-transcript-api>=1.1.1",
     "readability-lxml>=0.8.4.1",
     "pymupdf>=1.26.7",
 ]
