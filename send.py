@@ -11,7 +11,9 @@ from loguru import logger
 
 from util import getConfig
 
-sys.path.append(getConfig()["convertLinksDir"])
+convert_links_dir = getConfig()["convertLinksDir"]
+if convert_links_dir not in sys.path:
+    sys.path.insert(0, convert_links_dir)
 import lineate
 
 load_dotenv()
