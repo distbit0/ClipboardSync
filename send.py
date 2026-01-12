@@ -3,6 +3,7 @@ import io
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pyperclip
 import requests
@@ -11,16 +12,19 @@ from loguru import logger
 
 from util import getConfig
 
-convert_links_dir = getConfig()["convertLinksDir"]
-if convert_links_dir not in sys.path:
-    sys.path.insert(0, convert_links_dir)
-import lineate
-
 load_dotenv()
 
-logger.remove()
-logger.add("send.log", rotation="30 KB", retention=5, enqueue=True)
-logger.add(sys.stdout, level="INFO")
+_logger_configured = False
+
+
+def _configure_logging():
+    global _logger_configured
+    if _logger_configured:
+        return
+    logger.remove()
+    logger.add("send.log", rotation="30 KB", retention=5, enqueue=False)
+    logger.add(sys.stdout, level="INFO")
+    _logger_configured = True
 
 
 def get_selected_text():
@@ -38,11 +42,29 @@ def get_selected_text():
 def _is_urls_and_whitespace_only(text, urls):
     remaining_text = text
     for url in urls:
+        if not url:
+            continue
+        if "://" not in url:
+            if url.startswith("/"):
+                remaining_text = remaining_text.replace(f"file://{url}", "")
+            else:
+                resolved_path = str(Path(url).expanduser().resolve())
+                remaining_text = remaining_text.replace(f"file://{resolved_path}", "")
         remaining_text = remaining_text.replace(url, "")
     return remaining_text.strip() == ""
 
 
+def _load_lineate():
+    convert_links_dir = getConfig()["convertLinksDir"]
+    if convert_links_dir not in sys.path:
+        sys.path.insert(0, convert_links_dir)
+    import lineate
+
+    return lineate
+
+
 def convert_links_in_text(text):
+    lineate = _load_lineate()
     urls = lineate.find_urls_in_text(text)
     if not urls:
         return text, []
@@ -65,6 +87,8 @@ def convert_links_in_text(text):
 
 
 def send_notification_to_phone(topic_name, use_selected_text):
+    _configure_logging()
+    lineate = _load_lineate()
     if use_selected_text:
         text_to_send = get_selected_text()
         if text_to_send is None:
@@ -136,6 +160,7 @@ def send_notification_to_phone(topic_name, use_selected_text):
 
 
 def main():
+    _configure_logging()
     parser = argparse.ArgumentParser(description="Send text as a push notification.")
     parser.add_argument(
         "--selected",
