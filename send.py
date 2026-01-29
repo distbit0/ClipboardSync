@@ -86,7 +86,14 @@ def convert_links_in_text(text):
     return converted_text, converted_urls
 
 
-def send_notification_to_phone(topic_name, use_selected_text):
+def _build_attachment_payload(text: str, headers: dict) -> io.BytesIO:
+    file_like_object = io.BytesIO(text.encode("utf-8"))
+    file_like_object.name = "message.txt"
+    headers["X-Filename"] = "message.txt"
+    return file_like_object
+
+
+def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
     _configure_logging()
     lineate = _load_lineate()
     if use_selected_text:
@@ -97,50 +104,49 @@ def send_notification_to_phone(topic_name, use_selected_text):
     else:
         text_to_send = pyperclip.paste()
 
-    lineate.utilities.set_default_summarise(True)
     api_url = f"http://ntfy.sh/{topic_name}"
     headers = {}
-    urls = lineate.find_urls_in_text(text_to_send)
-    is_single_link = len(urls) == 1 and text_to_send.strip() == urls[0]
-    is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls)
-    logger.info(
-        f"Detected {len(urls)} url(s); single link: {is_single_link}; urls-only: {is_urls_only}"
-    )
-
-    if is_single_link:
-        text_to_send = lineate.process_url(
-            urls[0],
-            openInBrowser=False,
-            forceConvertAllUrls=True,
-            summarise=True,
-            forceNoConvert=False,
-            forceRefreshAll=False,
-        )
-        if not text_to_send:
-            logger.error("Single-link conversion returned no result.")
-            return
-        dataToSend = text_to_send.encode("utf-8")
-    elif is_urls_only:
-        text_to_send, converted_urls = convert_links_in_text(
-            text_to_send,
-        )
-        if not converted_urls:
-            logger.error("URL conversion returned no results; aborting send.")
-            return
-        logger.info(f"Converted {len(converted_urls)} url(s) for attachment.")
-        # Convert the text into a byte stream
-        file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
-        file_like_object.name = "message.txt"  # Define a filename for the attachment
-
-        # Adjust the headers to include the filename, indicating an attachment
-        headers["X-Filename"] = "message.txt"
-        dataToSend = file_like_object
+    if not convert:
+        dataToSend = _build_attachment_payload(text_to_send, headers)
     else:
-        # Non-url text present: send without conversion
-        file_like_object = io.BytesIO(text_to_send.encode("utf-8"))
-        file_like_object.name = "message.txt"
-        headers["X-Filename"] = "message.txt"
-        dataToSend = file_like_object
+        lineate.utilities.set_default_summarise(True)
+        urls = lineate.find_urls_in_text(text_to_send)
+        is_single_link = len(urls) == 1 and text_to_send.strip() == urls[0]
+        is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls)
+        logger.info(
+            f"Detected {len(urls)} url(s); single link: {is_single_link}; urls-only: {is_urls_only}"
+        )
+
+        if is_single_link:
+            text_to_send = lineate.process_url(
+                urls[0],
+                openInBrowser=False,
+                forceConvertAllUrls=True,
+                summarise=True,
+                forceNoConvert=False,
+                forceRefreshAll=False,
+            )
+            if not text_to_send:
+                logger.error("Single-link conversion returned no result.")
+                return
+            dataToSend = text_to_send.encode("utf-8")
+        elif is_urls_only:
+            text_to_send, converted_urls = convert_links_in_text(
+                text_to_send,
+            )
+            if not converted_urls:
+                logger.error("URL conversion returned no results; aborting send.")
+                return
+            logger.info(f"Converted {len(converted_urls)} url(s) for attachment.")
+            dataToSend = _build_attachment_payload(text_to_send, headers)
+        else:
+            gist_url = lineate._process_markdown_text(
+                text_to_send, summarise=True, force_refresh=False
+            )
+            if not gist_url:
+                logger.error("Text conversion returned no result.")
+                return
+            dataToSend = gist_url.encode("utf-8")
 
     try:
         logger.info(f"Sending to {api_url} with headers {headers}")
@@ -167,10 +173,16 @@ def main():
         help="Send selected text instead of clipboard content.",
         action="store_true",
     )
+    parser.add_argument(
+        "--no-convert",
+        help="Send text without converting URLs or creating gists.",
+        action="store_true",
+    )
     args = parser.parse_args()
     send_notification_to_phone(
         os.getenv("NTFY_SEND_TOPIC"),
         args.selected,
+        convert=not args.no_convert,
     )
 
 
