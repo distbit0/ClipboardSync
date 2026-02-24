@@ -1,4 +1,5 @@
 import argparse
+import io
 import os
 import subprocess
 import sys
@@ -85,6 +86,13 @@ def convert_links_in_text(text):
     return converted_text, converted_urls
 
 
+def _build_attachment_payload(text: str, headers: dict) -> io.BytesIO:
+    attachment_stream = io.BytesIO(text.encode("utf-8"))
+    attachment_stream.name = "message.txt"
+    headers["X-Filename"] = "message.txt"
+    return attachment_stream
+
+
 def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
     _configure_logging()
     lineate = _load_lineate()
@@ -97,8 +105,9 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
         text_to_send = pyperclip.paste()
 
     api_url = f"https://ntfy.sh/{topic_name}"
+    headers = {}
     if not convert:
-        data_to_send = text_to_send.encode("utf-8")
+        data_to_send = _build_attachment_payload(text_to_send, headers)
     else:
         lineate.utilities.set_default_summarise(True)
         urls = lineate.find_urls_in_text(text_to_send)
@@ -128,10 +137,8 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             if not converted_urls:
                 logger.error("URL conversion returned no results; aborting send.")
                 return
-            logger.info(f"Converted {len(converted_urls)} url(s) for send payload.")
-            # ntfy upload mode currently returns HTTP 500 for text payloads;
-            # send the converted URLs as a regular message body instead.
-            data_to_send = text_to_send.encode("utf-8")
+            logger.info(f"Converted {len(converted_urls)} url(s) for attachment send.")
+            data_to_send = _build_attachment_payload(text_to_send, headers)
         else:
             gist_url = lineate._process_markdown_text(
                 text_to_send, summarise=True, force_refresh=False
@@ -142,8 +149,13 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             data_to_send = gist_url.encode("utf-8")
 
     try:
-        logger.info(f"Sending to {api_url}")
-        response = requests.post(api_url, data=data_to_send, timeout=20)
+        logger.info(f"Sending to {api_url} with headers {headers}")
+        response = requests.post(
+            api_url,
+            data=data_to_send,
+            headers=headers,
+            timeout=20,
+        )
         logger.info("Sent notification payload.")
     except Exception as request_exception:
         logger.exception(f"Send failed: {request_exception}")

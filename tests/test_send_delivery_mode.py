@@ -3,16 +3,17 @@ from types import SimpleNamespace
 import send
 
 
-def test_no_convert_sends_plain_text_bytes(monkeypatch) -> None:
+def test_no_convert_sends_attachment_payload(monkeypatch) -> None:
     captured: dict = {}
 
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: object())
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "hello world")
 
-    def fake_post(url, data, timeout):
+    def fake_post(url, data, headers, timeout):
         captured["url"] = url
         captured["data"] = data
+        captured["headers"] = headers
         captured["timeout"] = timeout
         return SimpleNamespace(status_code=200, text="ok")
 
@@ -21,11 +22,12 @@ def test_no_convert_sends_plain_text_bytes(monkeypatch) -> None:
     send.send_notification_to_phone("topic-name", use_selected_text=False, convert=False)
 
     assert captured["url"] == "https://ntfy.sh/topic-name"
-    assert captured["data"] == b"hello world"
+    assert captured["data"].read() == b"hello world"
+    assert captured["headers"] == {"X-Filename": "message.txt"}
     assert captured["timeout"] == 20
 
 
-def test_urls_only_conversion_sends_plain_text_bytes(monkeypatch) -> None:
+def test_urls_only_conversion_sends_attachment_payload(monkeypatch) -> None:
     captured: dict = {}
 
     dummy_lineate = SimpleNamespace(
@@ -52,9 +54,10 @@ def test_urls_only_conversion_sends_plain_text_bytes(monkeypatch) -> None:
         ),
     )
 
-    def fake_post(url, data, timeout):
+    def fake_post(url, data, headers, timeout):
         captured["url"] = url
         captured["data"] = data
+        captured["headers"] = headers
         captured["timeout"] = timeout
         return SimpleNamespace(status_code=200, text="ok")
 
@@ -63,5 +66,6 @@ def test_urls_only_conversion_sends_plain_text_bytes(monkeypatch) -> None:
     send.send_notification_to_phone("topic-name", use_selected_text=False, convert=True)
 
     assert captured["url"] == "https://ntfy.sh/topic-name"
-    assert captured["data"] == b"https://converted.example/a\nhttps://converted.example/b"
+    assert captured["data"].read() == b"https://converted.example/a\nhttps://converted.example/b"
+    assert captured["headers"] == {"X-Filename": "message.txt"}
     assert captured["timeout"] == 20
