@@ -1,5 +1,4 @@
 import argparse
-import io
 import os
 import subprocess
 import sys
@@ -15,6 +14,7 @@ from util import getConfig
 load_dotenv()
 
 _logger_configured = False
+MAX_NON_FILE_MESSAGE_BYTES = 3500
 
 
 def _configure_logging():
@@ -86,11 +86,72 @@ def convert_links_in_text(text):
     return converted_text, converted_urls
 
 
-def _build_attachment_payload(text: str, headers: dict) -> io.BytesIO:
-    attachment_stream = io.BytesIO(text.encode("utf-8"))
-    attachment_stream.name = "message.txt"
-    headers["X-Filename"] = "message.txt"
-    return attachment_stream
+def _show_desktop_error(message: str) -> None:
+    try:
+        subprocess.run(
+            ["notify-send", "clipboardToPhone send error", message],
+            check=False,
+            close_fds=True,
+        )
+    except FileNotFoundError:
+        logger.error("notify-send not found; cannot display desktop alert.")
+    except Exception as exc:
+        logger.error(f"Failed to display desktop alert: {exc}")
+
+
+def _split_urls_into_messages(urls: list[str], max_message_bytes: int) -> list[str]:
+    messages: list[str] = []
+    current_urls: list[str] = []
+    current_size = 0
+
+    for url in urls:
+        separator_size = 1 if current_urls else 0
+        url_size = len(url.encode("utf-8"))
+        entry_size = separator_size + url_size
+
+        if url_size > max_message_bytes:
+            raise ValueError("A single URL exceeds the non-file message limit.")
+
+        if current_size + entry_size <= max_message_bytes:
+            current_urls.append(url)
+            current_size += entry_size
+            continue
+
+        messages.append("\n".join(current_urls))
+        current_urls = [url]
+        current_size = url_size
+
+    if current_urls:
+        messages.append("\n".join(current_urls))
+
+    return messages
+
+
+def _send_plain_messages(api_url: str, payload_messages: list[str]) -> bool:
+    total_messages = len(payload_messages)
+    for message_index, payload_message in enumerate(payload_messages, start=1):
+        try:
+            logger.info(f"Sending message {message_index}/{total_messages} to {api_url}")
+            response = requests.post(
+                api_url,
+                data=payload_message.encode("utf-8"),
+                timeout=20,
+            )
+            logger.info("Sent notification payload.")
+        except Exception as request_exception:
+            logger.exception(f"Send failed: {request_exception}")
+            return False
+
+        if response.status_code != 200:
+            response_body_preview = response.text[:400].replace("\n", "\\n")
+            logger.error(
+                "Failed to send notification. "
+                f"HTTP Status Code: {response.status_code}; "
+                f"Response: {response_body_preview}"
+            )
+            return False
+
+    return True
 
 
 def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
@@ -105,9 +166,31 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
         text_to_send = pyperclip.paste()
 
     api_url = f"https://ntfy.sh/{topic_name}"
-    headers = {}
     if not convert:
-        data_to_send = _build_attachment_payload(text_to_send, headers)
+        urls = lineate.find_urls_in_text(text_to_send)
+        is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls)
+        if urls and is_urls_only:
+            try:
+                payload_messages = _split_urls_into_messages(
+                    urls,
+                    MAX_NON_FILE_MESSAGE_BYTES,
+                )
+            except ValueError as split_error:
+                logger.error(f"Could not split URL payload: {split_error}")
+                return
+            logger.info(f"Split URL payload into {len(payload_messages)} message chunk(s).")
+        else:
+            text_size = len(text_to_send.encode("utf-8"))
+            if text_size > MAX_NON_FILE_MESSAGE_BYTES:
+                logger.error(
+                    "Non-URL content exceeds non-file message limit "
+                    f"({text_size}>{MAX_NON_FILE_MESSAGE_BYTES}); aborting."
+                )
+                _show_desktop_error(
+                    "Message too large to send without file attachment. Trim content or send URLs only."
+                )
+                return
+            payload_messages = [text_to_send]
     else:
         lineate.utilities.set_default_summarise(True)
         urls = lineate.find_urls_in_text(text_to_send)
@@ -129,16 +212,32 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             if not text_to_send:
                 logger.error("Single-link conversion returned no result.")
                 return
-            data_to_send = text_to_send.encode("utf-8")
+            try:
+                payload_messages = _split_urls_into_messages(
+                    [text_to_send],
+                    MAX_NON_FILE_MESSAGE_BYTES,
+                )
+            except ValueError as split_error:
+                logger.error(f"Could not split URL payload: {split_error}")
+                return
         elif is_urls_only:
-            text_to_send, converted_urls = convert_links_in_text(
+            _converted_text, converted_urls = convert_links_in_text(
                 text_to_send,
             )
             if not converted_urls:
                 logger.error("URL conversion returned no results; aborting send.")
                 return
-            logger.info(f"Converted {len(converted_urls)} url(s) for attachment send.")
-            data_to_send = _build_attachment_payload(text_to_send, headers)
+            try:
+                payload_messages = _split_urls_into_messages(
+                    converted_urls,
+                    MAX_NON_FILE_MESSAGE_BYTES,
+                )
+            except ValueError as split_error:
+                logger.error(f"Could not split URL payload: {split_error}")
+                return
+            logger.info(
+                f"Converted {len(converted_urls)} url(s) into {len(payload_messages)} message chunk(s)."
+            )
         else:
             gist_url = lineate._process_markdown_text(
                 text_to_send, summarise=True, force_refresh=False
@@ -146,29 +245,21 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             if not gist_url:
                 logger.error("Text conversion returned no result.")
                 return
-            data_to_send = gist_url.encode("utf-8")
+            gist_url_size = len(gist_url.encode("utf-8"))
+            if gist_url_size > MAX_NON_FILE_MESSAGE_BYTES:
+                logger.error(
+                    "Non-URL content exceeds non-file message limit "
+                    f"({gist_url_size}>{MAX_NON_FILE_MESSAGE_BYTES}); aborting."
+                )
+                _show_desktop_error(
+                    "Message too large to send without file attachment. Trim content or send URLs only."
+                )
+                return
+            payload_messages = [gist_url]
 
-    try:
-        logger.info(f"Sending to {api_url} with headers {headers}")
-        response = requests.post(
-            api_url,
-            data=data_to_send,
-            headers=headers,
-            timeout=20,
-        )
-        logger.info("Sent notification payload.")
-    except Exception as request_exception:
-        logger.exception(f"Send failed: {request_exception}")
-        return
-
-    if response.status_code == 200:
-        logger.info(f"Notification sent successfully to {topic_name}.")
-    else:
-        response_body_preview = response.text[:400].replace("\n", "\\n")
-        logger.error(
-            "Failed to send notification. "
-            f"HTTP Status Code: {response.status_code}; "
-            f"Response: {response_body_preview}"
+    if _send_plain_messages(api_url, payload_messages):
+        logger.info(
+            f"Notification sent successfully to {topic_name} in {len(payload_messages)} message(s)."
         )
 
 
