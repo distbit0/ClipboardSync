@@ -1,5 +1,4 @@
 import argparse
-import io
 import os
 import subprocess
 import sys
@@ -86,13 +85,6 @@ def convert_links_in_text(text):
     return converted_text, converted_urls
 
 
-def _build_attachment_payload(text: str, headers: dict) -> io.BytesIO:
-    file_like_object = io.BytesIO(text.encode("utf-8"))
-    file_like_object.name = "message.txt"
-    headers["X-Filename"] = "message.txt"
-    return file_like_object
-
-
 def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
     _configure_logging()
     lineate = _load_lineate()
@@ -104,10 +96,9 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
     else:
         text_to_send = pyperclip.paste()
 
-    api_url = f"http://ntfy.sh/{topic_name}"
-    headers = {}
+    api_url = f"https://ntfy.sh/{topic_name}"
     if not convert:
-        dataToSend = _build_attachment_payload(text_to_send, headers)
+        data_to_send = text_to_send.encode("utf-8")
     else:
         lineate.utilities.set_default_summarise(True)
         urls = lineate.find_urls_in_text(text_to_send)
@@ -129,7 +120,7 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             if not text_to_send:
                 logger.error("Single-link conversion returned no result.")
                 return
-            dataToSend = text_to_send.encode("utf-8")
+            data_to_send = text_to_send.encode("utf-8")
         elif is_urls_only:
             text_to_send, converted_urls = convert_links_in_text(
                 text_to_send,
@@ -137,8 +128,10 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             if not converted_urls:
                 logger.error("URL conversion returned no results; aborting send.")
                 return
-            logger.info(f"Converted {len(converted_urls)} url(s) for attachment.")
-            dataToSend = _build_attachment_payload(text_to_send, headers)
+            logger.info(f"Converted {len(converted_urls)} url(s) for send payload.")
+            # ntfy upload mode currently returns HTTP 500 for text payloads;
+            # send the converted URLs as a regular message body instead.
+            data_to_send = text_to_send.encode("utf-8")
         else:
             gist_url = lineate._process_markdown_text(
                 text_to_send, summarise=True, force_refresh=False
@@ -146,22 +139,24 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             if not gist_url:
                 logger.error("Text conversion returned no result.")
                 return
-            dataToSend = gist_url.encode("utf-8")
+            data_to_send = gist_url.encode("utf-8")
 
     try:
-        logger.info(f"Sending to {api_url} with headers {headers}")
-        response = requests.post(api_url, data=dataToSend, headers=headers)
+        logger.info(f"Sending to {api_url}")
+        response = requests.post(api_url, data=data_to_send, timeout=20)
         logger.info("Sent notification payload.")
     except Exception as request_exception:
         logger.exception(f"Send failed: {request_exception}")
         return
 
-    # Check the response status for both attachment and non-attachment cases
     if response.status_code == 200:
         logger.info(f"Notification sent successfully to {topic_name}.")
     else:
+        response_body_preview = response.text[:400].replace("\n", "\\n")
         logger.error(
-            f"Failed to send notification. HTTP Status Code: {response.status_code}"
+            "Failed to send notification. "
+            f"HTTP Status Code: {response.status_code}; "
+            f"Response: {response_body_preview}"
         )
 
 
