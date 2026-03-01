@@ -15,6 +15,9 @@ load_dotenv()
 
 _logger_configured = False
 MAX_NON_FILE_MESSAGE_BYTES = 3500
+SEND_RAW_WORKFLOW = "send_ntfy_raw"
+SEND_CONVERT_WORKFLOW = "send_ntfy_convert"
+SEND_URL_QUEUE_NAME = "clipboard_send_urls"
 
 
 def _configure_logging():
@@ -63,29 +66,6 @@ def _load_lineate():
     return lineate
 
 
-def convert_links_in_text(text):
-    lineate = _load_lineate()
-    urls = lineate.find_urls_in_text(text)
-    if not urls:
-        return text, []
-    if not _is_urls_and_whitespace_only(text, urls):
-        return text, []
-
-    converted_urls = lineate.main(
-        text,
-        openInBrowser=False,
-        forceConvertAllUrls=True,
-        summarise=True,
-        forceNoConvert=False,
-        forceRefreshAll=False,
-    )
-    if not converted_urls:
-        return "", []
-
-    converted_text = "\n".join(converted_urls)
-    return converted_text, converted_urls
-
-
 def _show_desktop_error(message: str) -> None:
     try:
         subprocess.run(
@@ -97,34 +77,6 @@ def _show_desktop_error(message: str) -> None:
         logger.error("notify-send not found; cannot display desktop alert.")
     except Exception as exc:
         logger.error(f"Failed to display desktop alert: {exc}")
-
-
-def _split_urls_into_messages(urls: list[str], max_message_bytes: int) -> list[str]:
-    messages: list[str] = []
-    current_urls: list[str] = []
-    current_size = 0
-
-    for url in urls:
-        separator_size = 1 if current_urls else 0
-        url_size = len(url.encode("utf-8"))
-        entry_size = separator_size + url_size
-
-        if url_size > max_message_bytes:
-            raise ValueError("A single URL exceeds the non-file message limit.")
-
-        if current_size + entry_size <= max_message_bytes:
-            current_urls.append(url)
-            current_size += entry_size
-            continue
-
-        messages.append("\n".join(current_urls))
-        current_urls = [url]
-        current_size = url_size
-
-    if current_urls:
-        messages.append("\n".join(current_urls))
-
-    return messages
 
 
 def _send_plain_messages(api_url: str, payload_messages: list[str]) -> bool:
@@ -154,6 +106,99 @@ def _send_plain_messages(api_url: str, payload_messages: list[str]) -> bool:
     return True
 
 
+def _resolve_api_url_from_env() -> str | None:
+    topic_name = os.getenv("NTFY_SEND_TOPIC")
+    if not topic_name:
+        logger.error("NTFY_SEND_TOPIC is not set; cannot process queued URL jobs.")
+        return None
+    return f"https://ntfy.sh/{topic_name}"
+
+
+def _send_single_url_payload(api_url: str, payload_url: str) -> bool:
+    payload_size = len(payload_url.encode("utf-8"))
+    if payload_size > MAX_NON_FILE_MESSAGE_BYTES:
+        logger.error(
+            "URL payload exceeds non-file message limit "
+            f"({payload_size}>{MAX_NON_FILE_MESSAGE_BYTES}); aborting."
+        )
+        _show_desktop_error(
+            "A URL payload exceeded the message limit; it remains queued for retry."
+        )
+        return False
+    return _send_plain_messages(api_url, [payload_url])
+
+
+def _enqueue_and_send_url_jobs(
+    lineate, urls: list[str], *, convert: bool
+) -> list[str]:
+    queue_name = SEND_URL_QUEUE_NAME
+    workflow = SEND_CONVERT_WORKFLOW if convert else SEND_RAW_WORKFLOW
+    job_payload = {"convert": convert}
+    jobs = [
+        lineate.persistent_url_queue.create_url_job(
+            url,
+            workflow=workflow,
+            payload=job_payload,
+        )
+        for url in urls
+    ]
+    added_count = lineate.persistent_url_queue.enqueue_jobs(queue_name, jobs)
+    logger.info(
+        f"Queue {queue_name}: enqueued {added_count} new URL(s); requested {len(urls)}."
+    )
+
+    def _process_claimed_job(job: dict[str, object]) -> str | None:
+        queued_url = job.get("url")
+        if not isinstance(queued_url, str) or not queued_url:
+            logger.error("Queue job missing non-empty url; refusing to continue.")
+            return None
+        queued_workflow = job.get("workflow")
+        if queued_workflow not in {SEND_RAW_WORKFLOW, SEND_CONVERT_WORKFLOW}:
+            logger.error(
+                f"Queue job has unsupported workflow {queued_workflow!r}; refusing to continue."
+            )
+            return None
+
+        api_url = _resolve_api_url_from_env()
+        if not api_url:
+            return None
+
+        payload_url = queued_url
+        if queued_workflow == SEND_CONVERT_WORKFLOW:
+            payload_url = lineate.process_url(
+                queued_url,
+                openInBrowser=False,
+                forceConvertAllUrls=True,
+                summarise=True,
+                forceNoConvert=False,
+                forceRefreshAll=False,
+            )
+            if not payload_url:
+                logger.error(f"URL conversion returned no result for {queued_url}.")
+                return None
+
+        if not _send_single_url_payload(api_url, payload_url):
+            return None
+        return payload_url
+
+    delivered_urls, drain_status = lineate.persistent_url_queue.drain_queue(
+        queue_name, _process_claimed_job
+    )
+    if drain_status == "busy":
+        logger.info(
+            f"Queue {queue_name} is currently claimed by another running process; "
+            "this run only enqueued new URLs."
+        )
+    elif drain_status == "failed":
+        logger.error(
+            f"Queue {queue_name} stopped after a failed URL. "
+            "The failed URL remains queued for the next run."
+        )
+    else:
+        logger.info(f"Queue {queue_name}: delivered {len(delivered_urls)} URL(s).")
+    return delivered_urls
+
+
 def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
     _configure_logging()
     lineate = _load_lineate()
@@ -170,15 +215,8 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
         urls = lineate.find_urls_in_text(text_to_send)
         is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls)
         if urls and is_urls_only:
-            try:
-                payload_messages = _split_urls_into_messages(
-                    urls,
-                    MAX_NON_FILE_MESSAGE_BYTES,
-                )
-            except ValueError as split_error:
-                logger.error(f"Could not split URL payload: {split_error}")
-                return
-            logger.info(f"Split URL payload into {len(payload_messages)} message chunk(s).")
+            _enqueue_and_send_url_jobs(lineate, urls, convert=False)
+            return
         else:
             text_size = len(text_to_send.encode("utf-8"))
             if text_size > MAX_NON_FILE_MESSAGE_BYTES:
@@ -200,44 +238,9 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             f"Detected {len(urls)} url(s); single link: {is_single_link}; urls-only: {is_urls_only}"
         )
 
-        if is_single_link:
-            text_to_send = lineate.process_url(
-                urls[0],
-                openInBrowser=False,
-                forceConvertAllUrls=True,
-                summarise=True,
-                forceNoConvert=False,
-                forceRefreshAll=False,
-            )
-            if not text_to_send:
-                logger.error("Single-link conversion returned no result.")
-                return
-            try:
-                payload_messages = _split_urls_into_messages(
-                    [text_to_send],
-                    MAX_NON_FILE_MESSAGE_BYTES,
-                )
-            except ValueError as split_error:
-                logger.error(f"Could not split URL payload: {split_error}")
-                return
-        elif is_urls_only:
-            _converted_text, converted_urls = convert_links_in_text(
-                text_to_send,
-            )
-            if not converted_urls:
-                logger.error("URL conversion returned no results; aborting send.")
-                return
-            try:
-                payload_messages = _split_urls_into_messages(
-                    converted_urls,
-                    MAX_NON_FILE_MESSAGE_BYTES,
-                )
-            except ValueError as split_error:
-                logger.error(f"Could not split URL payload: {split_error}")
-                return
-            logger.info(
-                f"Converted {len(converted_urls)} url(s) into {len(payload_messages)} message chunk(s)."
-            )
+        if is_single_link or is_urls_only:
+            _enqueue_and_send_url_jobs(lineate, urls, convert=True)
+            return
         else:
             gist_url = lineate._process_markdown_text(
                 text_to_send, summarise=True, force_refresh=False
