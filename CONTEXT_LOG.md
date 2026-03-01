@@ -9,3 +9,4 @@
 - URL jobs are checkpointed one URL at a time, and a URL is only removed from the queue after an HTTP 200 send succeeds.
 - Queue jobs include a workflow marker (`send_ntfy_raw` vs `send_ntfy_convert`) so replay preserves processing intent.
 - `NTFY_SEND_TOPIC` is resolved at send time for each queued URL attempt, so queued backlog follows current environment configuration.
+- `send.py` now attempts queue draining on every run before handling the current clipboard payload, so pending URL backlog progresses even when the current clipboard content is plain text.

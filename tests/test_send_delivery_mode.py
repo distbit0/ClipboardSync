@@ -9,6 +9,7 @@ def test_no_convert_sends_single_non_url_message(monkeypatch) -> None:
     dummy_lineate = SimpleNamespace(find_urls_in_text=lambda _text: [])
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
+    monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "hello world")
 
     def fake_post(url, data, timeout):
@@ -38,6 +39,7 @@ def test_urls_only_conversion_routes_to_queue_delivery(monkeypatch) -> None:
 
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
+    monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
     monkeypatch.setattr(
         send.pyperclip,
         "paste",
@@ -61,6 +63,32 @@ def test_urls_only_conversion_routes_to_queue_delivery(monkeypatch) -> None:
             True,
         )
     ]
+
+
+def test_send_notification_drains_pending_queue_before_non_url_send(monkeypatch) -> None:
+    captured_payloads: list[bytes] = []
+    drained_lineate_objects = []
+
+    dummy_lineate = SimpleNamespace(find_urls_in_text=lambda _text: [])
+    monkeypatch.setattr(send, "_configure_logging", lambda: None)
+    monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
+    monkeypatch.setattr(send.pyperclip, "paste", lambda: "hello world")
+    monkeypatch.setattr(
+        send, "_drain_pending_url_jobs", lambda lineate: drained_lineate_objects.append(lineate)
+    )
+
+    def fake_post(url, data, timeout):
+        assert url == "https://ntfy.sh/topic-name"
+        assert timeout == 20
+        captured_payloads.append(data)
+        return SimpleNamespace(status_code=200, text="ok")
+
+    monkeypatch.setattr(send.requests, "post", fake_post)
+
+    send.send_notification_to_phone("topic-name", use_selected_text=False, convert=False)
+
+    assert drained_lineate_objects == [dummy_lineate]
+    assert captured_payloads == [b"hello world"]
 
 
 def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_claim(monkeypatch) -> None:
@@ -181,6 +209,7 @@ def test_oversized_non_url_content_fails_and_alerts(monkeypatch) -> None:
     dummy_lineate = SimpleNamespace(find_urls_in_text=lambda _text: [])
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
+    monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "this content is too large")
     monkeypatch.setattr(send, "MAX_NON_FILE_MESSAGE_BYTES", 8)
     monkeypatch.setattr(send, "_show_desktop_error", desktop_alerts.append)

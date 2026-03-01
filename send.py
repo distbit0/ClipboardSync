@@ -189,14 +189,18 @@ def _enqueue_and_send_url_jobs(
             f"Queue {queue_name} is currently claimed by another running process; "
             "this run only enqueued new URLs."
         )
-    elif drain_status == "failed":
+    elif drain_status == "drained_with_failures":
         logger.error(
-            f"Queue {queue_name} stopped after a failed URL. "
-            "The failed URL remains queued for the next run."
+            f"Queue {queue_name} processed available URLs, "
+            "but one or more failed URLs remain queued for retry."
         )
     else:
         logger.info(f"Queue {queue_name}: delivered {len(delivered_urls)} URL(s).")
     return delivered_urls
+
+
+def _drain_pending_url_jobs(lineate) -> list[str]:
+    return _enqueue_and_send_url_jobs(lineate, [], convert=False)
 
 
 def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
@@ -209,6 +213,8 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
             return
     else:
         text_to_send = pyperclip.paste()
+
+    _drain_pending_url_jobs(lineate)
 
     api_url = f"https://ntfy.sh/{topic_name}"
     if not convert:
