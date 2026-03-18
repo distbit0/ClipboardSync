@@ -10,3 +10,7 @@
 - Queue jobs include a workflow marker (`send_ntfy_raw` vs `send_ntfy_convert`) so replay preserves processing intent.
 - `NTFY_SEND_TOPIC` is resolved at send time for each queued URL attempt, so queued backlog follows current environment configuration.
 - `send.py` now attempts queue draining on every run before handling the current clipboard payload, so pending URL backlog progresses even when the current clipboard content is plain text.
+
+## 2026-03-19: URL-only routing consistency with lineate
+- `send.py` now reuses `lineate._count_non_url_words` when deciding whether clipboard content is URLs-only, instead of maintaining a separate raw-text stripping heuristic.
+- This keeps `send.py` aligned with `lineate` for normalized wrappers such as LeechBlock delayed URLs (`chrome-extension://.../delayed.html?...`), which otherwise look like mixed text even when they should be treated as a single URL.

@@ -65,6 +65,36 @@ def test_urls_only_conversion_routes_to_queue_delivery(monkeypatch) -> None:
     ]
 
 
+def test_leechblock_wrapped_single_link_routes_to_queue_delivery(monkeypatch) -> None:
+    queue_calls: list[tuple[list[str], bool]] = []
+    wrapped_url = (
+        "chrome-extension://blaaajhemilngeeffpbfkdjjoefldkok/"
+        "delayed.html?4&https://www.greaterwrong.com/posts/qqcQN2YBc5jFpehbm/"
+        "sparks-of-rsi-1"
+    )
+    unwrapped_url = "https://www.greaterwrong.com/posts/qqcQN2YBc5jFpehbm/sparks-of-rsi-1"
+
+    dummy_lineate = SimpleNamespace(
+        utilities=SimpleNamespace(set_default_summarise=lambda _enabled: None),
+        find_urls_in_text=lambda _text: [unwrapped_url],
+        _count_non_url_words=lambda _text, _urls: 0,
+    )
+
+    monkeypatch.setattr(send, "_configure_logging", lambda: None)
+    monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
+    monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
+    monkeypatch.setattr(send.pyperclip, "paste", lambda: wrapped_url)
+    monkeypatch.setattr(
+        send,
+        "_enqueue_and_send_url_jobs",
+        lambda _lineate, urls, convert: queue_calls.append((urls, convert)),
+    )
+
+    send.send_notification_to_phone("topic-name", use_selected_text=False, convert=True)
+
+    assert queue_calls == [([unwrapped_url], True)]
+
+
 def test_send_notification_drains_pending_queue_before_non_url_send(monkeypatch) -> None:
     captured_payloads: list[bytes] = []
     drained_lineate_objects = []

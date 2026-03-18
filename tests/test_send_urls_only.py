@@ -29,3 +29,14 @@ def test_urls_only_rejects_extra_text(tmp_path: Path) -> None:
     urls = [str(local_file)]
 
     assert _is_urls_and_whitespace_only(text, urls) is False
+
+
+def test_urls_only_accepts_leechblock_wrapped_url() -> None:
+    text = (
+        "chrome-extension://blaaajhemilngeeffpbfkdjjoefldkok/"
+        "delayed.html?4&https://www.greaterwrong.com/posts/qqcQN2YBc5jFpehbm/"
+        "sparks-of-rsi-1"
+    )
+    urls = ["https://www.greaterwrong.com/posts/qqcQN2YBc5jFpehbm/sparks-of-rsi-1"]
+
+    assert _is_urls_and_whitespace_only(text, urls) is True
