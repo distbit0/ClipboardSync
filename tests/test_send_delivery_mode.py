@@ -6,7 +6,10 @@ import send
 def test_no_convert_sends_single_non_url_message(monkeypatch) -> None:
     captured_payloads: list[bytes] = []
 
-    dummy_lineate = SimpleNamespace(find_urls_in_text=lambda _text: [])
+    dummy_lineate = SimpleNamespace(
+        find_urls_in_text=lambda _text: [],
+        _count_non_url_words=lambda _text, _urls: 2,
+    )
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
     monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
@@ -35,6 +38,7 @@ def test_urls_only_conversion_routes_to_queue_delivery(monkeypatch) -> None:
             "https://example.com/two",
             "https://example.com/three",
         ],
+        _count_non_url_words=lambda _text, _urls: 0,
     )
 
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
@@ -99,7 +103,10 @@ def test_send_notification_drains_pending_queue_before_non_url_send(monkeypatch)
     captured_payloads: list[bytes] = []
     drained_lineate_objects = []
 
-    dummy_lineate = SimpleNamespace(find_urls_in_text=lambda _text: [])
+    dummy_lineate = SimpleNamespace(
+        find_urls_in_text=lambda _text: [],
+        _count_non_url_words=lambda _text, _urls: 2,
+    )
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "hello world")
@@ -236,7 +243,10 @@ def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) ->
 def test_oversized_non_url_content_fails_and_alerts(monkeypatch) -> None:
     desktop_alerts: list[str] = []
 
-    dummy_lineate = SimpleNamespace(find_urls_in_text=lambda _text: [])
+    dummy_lineate = SimpleNamespace(
+        find_urls_in_text=lambda _text: [],
+        _count_non_url_words=lambda _text, _urls: 4,
+    )
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
     monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])

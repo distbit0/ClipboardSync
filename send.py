@@ -1,9 +1,7 @@
 import argparse
 import os
-import re
 import subprocess
 import sys
-from pathlib import Path
 
 import pyperclip
 import requests
@@ -43,25 +41,8 @@ def get_selected_text():
         return None
 
 
-def _fallback_strip_urls_and_paths(text: str, urls: list[str]) -> str:
-    scrubbed = re.sub(r"https?://[^\s]+", " ", text)
-    scrubbed = re.sub(r"file://[^\s]+", " ", scrubbed)
-    scrubbed = re.sub(r"chrome-extension://[^\s]+", " ", scrubbed)
-    for url in urls:
-        if not url:
-            continue
-        if url.startswith(("http://", "https://", "file://")):
-            continue
-        resolved_path = str(Path(url).expanduser().resolve())
-        scrubbed = scrubbed.replace(url, " ")
-        scrubbed = scrubbed.replace(f"file://{resolved_path}", " ")
-    return scrubbed
-
-
-def _is_urls_and_whitespace_only(text: str, urls: list[str], lineate=None) -> bool:
-    if lineate and hasattr(lineate, "_count_non_url_words"):
-        return lineate._count_non_url_words(text, urls) == 0
-    return _fallback_strip_urls_and_paths(text, urls).strip() == ""
+def _is_urls_and_whitespace_only(lineate, text: str, urls: list[str]) -> bool:
+    return lineate._count_non_url_words(text, urls) == 0
 
 
 def _load_lineate():
@@ -226,7 +207,7 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
     api_url = f"https://ntfy.sh/{topic_name}"
     if not convert:
         urls = lineate.find_urls_in_text(text_to_send)
-        is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls, lineate)
+        is_urls_only = _is_urls_and_whitespace_only(lineate, text_to_send, urls)
         if urls and is_urls_only:
             _enqueue_and_send_url_jobs(lineate, urls, convert=False)
             return
@@ -246,7 +227,7 @@ def send_notification_to_phone(topic_name, use_selected_text, *, convert: bool):
         lineate.utilities.set_default_summarise(True)
         urls = lineate.find_urls_in_text(text_to_send)
         is_single_link = len(urls) == 1 and text_to_send.strip() == urls[0]
-        is_urls_only = _is_urls_and_whitespace_only(text_to_send, urls, lineate)
+        is_urls_only = _is_urls_and_whitespace_only(lineate, text_to_send, urls)
         logger.info(
             f"Detected {len(urls)} url(s); single link: {is_single_link}; urls-only: {is_urls_only}"
         )
