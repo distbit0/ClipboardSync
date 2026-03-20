@@ -19,3 +19,7 @@
 - `send.py` now retries `HTTP 429` indefinitely in-process instead of treating rate limiting as a hard failure.
 - The retry delay honors ntfy's `Retry-After` header when present; otherwise it logs that the header was missing/invalid and uses explicit exponential backoff.
 - This lives in the shared plain-message send path, so queued URL sends driven by the `lineate` integration inherit the same behavior automatically.
+
+## 2026-03-20: lineate-owned URL batch normalization
+- `send.py` now delegates queue-bound URL batch normalization to `lineate` via `_expand_batch_urls(...)` and `_rewrite_pending_playlist_jobs(...)` instead of carrying its own notion of special URL shapes.
+- This keeps durable ntfy delivery aligned with `lineate` for playlist expansion and any future batch-boundary URL rewrites, rather than duplicating routing policy in two repos.

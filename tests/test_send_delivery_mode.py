@@ -3,10 +3,19 @@ from types import SimpleNamespace
 import send
 
 
+def _build_dummy_lineate(**overrides):
+    defaults = {
+        "_expand_batch_urls": lambda urls: list(urls),
+        "_rewrite_pending_playlist_jobs": lambda _queue_name: 0,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
 def test_no_convert_sends_single_non_url_message(monkeypatch) -> None:
     captured_payloads: list[bytes] = []
 
-    dummy_lineate = SimpleNamespace(
+    dummy_lineate = _build_dummy_lineate(
         find_urls_in_text=lambda _text: [],
         _count_non_url_words=lambda _text, _urls: 2,
     )
@@ -55,7 +64,7 @@ def test_send_plain_messages_retries_429_until_success(monkeypatch) -> None:
 def test_urls_only_conversion_routes_to_queue_delivery(monkeypatch) -> None:
     queue_calls: list[tuple[list[str], bool]] = []
 
-    dummy_lineate = SimpleNamespace(
+    dummy_lineate = _build_dummy_lineate(
         utilities=SimpleNamespace(set_default_summarise=lambda _enabled: None),
         find_urls_in_text=lambda _text: [
             "https://example.com/one",
@@ -102,7 +111,7 @@ def test_leechblock_wrapped_single_link_routes_to_queue_delivery(monkeypatch) ->
     )
     unwrapped_url = "https://www.greaterwrong.com/posts/qqcQN2YBc5jFpehbm/sparks-of-rsi-1"
 
-    dummy_lineate = SimpleNamespace(
+    dummy_lineate = _build_dummy_lineate(
         utilities=SimpleNamespace(set_default_summarise=lambda _enabled: None),
         find_urls_in_text=lambda _text: [unwrapped_url],
         _count_non_url_words=lambda _text, _urls: 0,
@@ -127,7 +136,7 @@ def test_send_notification_drains_pending_queue_before_non_url_send(monkeypatch)
     captured_payloads: list[bytes] = []
     drained_lineate_objects = []
 
-    dummy_lineate = SimpleNamespace(
+    dummy_lineate = _build_dummy_lineate(
         find_urls_in_text=lambda _text: [],
         _count_non_url_words=lambda _text, _urls: 2,
     )
@@ -178,7 +187,7 @@ def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_claim(monkeypatch) -> No
                 outputs.append(process_job(claimed))
             return outputs, "drained"
 
-    dummy_lineate = SimpleNamespace(persistent_url_queue=DummyQueue())
+    dummy_lineate = _build_dummy_lineate(persistent_url_queue=DummyQueue())
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-a")
 
     def fake_send_plain_messages(api_url, payload_messages):
@@ -241,7 +250,7 @@ def test_enqueue_and_send_url_jobs_retries_429_and_still_delivers(monkeypatch) -
         attempted_payloads.append(data)
         return next(responses)
 
-    dummy_lineate = SimpleNamespace(persistent_url_queue=DummyQueue())
+    dummy_lineate = _build_dummy_lineate(persistent_url_queue=DummyQueue())
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
     monkeypatch.setattr(send.requests, "post", fake_post)
     monkeypatch.setattr(send.time, "sleep", sleep_durations.append)
@@ -295,7 +304,7 @@ def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) ->
         converted_urls.append(converted)
         return converted
 
-    dummy_lineate = SimpleNamespace(
+    dummy_lineate = _build_dummy_lineate(
         persistent_url_queue=DummyQueue(),
         process_url=fake_process_url,
     )
@@ -322,7 +331,7 @@ def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) ->
 def test_oversized_non_url_content_fails_and_alerts(monkeypatch) -> None:
     desktop_alerts: list[str] = []
 
-    dummy_lineate = SimpleNamespace(
+    dummy_lineate = _build_dummy_lineate(
         find_urls_in_text=lambda _text: [],
         _count_non_url_words=lambda _text, _urls: 4,
     )
@@ -342,4 +351,57 @@ def test_oversized_non_url_content_fails_and_alerts(monkeypatch) -> None:
 
     assert desktop_alerts == [
         "Message too large to send without file attachment. Trim content or send URLs only."
+    ]
+
+
+def test_enqueue_and_send_url_jobs_reuses_lineate_batch_normalization(monkeypatch) -> None:
+    queued_jobs: list[dict] = []
+    expanded_inputs: list[list[str]] = []
+    rewritten_queue_names: list[str] = []
+
+    class DummyQueue:
+        def create_url_job(self, url, workflow, payload):
+            job = {"url": url, "workflow": workflow, "payload": payload}
+            queued_jobs.append(job)
+            return job
+
+        def enqueue_jobs(self, _queue_name, jobs):
+            assert jobs == queued_jobs
+            return len(jobs)
+
+        def drain_queue(self, _queue_name, process_job):
+            outputs = []
+            for index, job in enumerate(queued_jobs, start=1):
+                outputs.append(process_job({"id": str(index), **job}))
+            return outputs, "drained"
+
+    dummy_lineate = _build_dummy_lineate(
+        persistent_url_queue=DummyQueue(),
+        _expand_batch_urls=lambda urls: expanded_inputs.append(list(urls)) or [
+            "https://www.youtube.com/watch?v=video-one",
+            "https://www.youtube.com/watch?v=video-two",
+        ],
+        _rewrite_pending_playlist_jobs=lambda queue_name: rewritten_queue_names.append(
+            queue_name
+        )
+        or 0,
+    )
+    monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
+    monkeypatch.setattr(send, "_send_plain_messages", lambda _api_url, _payloads: True)
+
+    delivered = send._enqueue_and_send_url_jobs(
+        dummy_lineate,
+        ["https://www.youtube.com/playlist?list=PL12345"],
+        convert=False,
+    )
+
+    assert expanded_inputs == [["https://www.youtube.com/playlist?list=PL12345"]]
+    assert rewritten_queue_names == [send.SEND_URL_QUEUE_NAME]
+    assert [job["url"] for job in queued_jobs] == [
+        "https://www.youtube.com/watch?v=video-one",
+        "https://www.youtube.com/watch?v=video-two",
+    ]
+    assert delivered == [
+        "https://www.youtube.com/watch?v=video-one",
+        "https://www.youtube.com/watch?v=video-two",
     ]
