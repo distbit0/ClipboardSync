@@ -14,3 +14,8 @@
 ## 2026-03-19: URL-only routing consistency with lineate
 - `send.py` now reuses `lineate._count_non_url_words` when deciding whether clipboard content is URLs-only, instead of maintaining a separate raw-text stripping heuristic.
 - This keeps `send.py` aligned with `lineate` for normalized wrappers such as LeechBlock delayed URLs (`chrome-extension://.../delayed.html?...`), which otherwise look like mixed text even when they should be treated as a single URL.
+
+## 2026-03-20: ntfy 429 retry semantics
+- `send.py` now retries `HTTP 429` indefinitely in-process instead of treating rate limiting as a hard failure.
+- The retry delay honors ntfy's `Retry-After` header when present; otherwise it logs that the header was missing/invalid and uses explicit exponential backoff.
+- This lives in the shared plain-message send path, so queued URL sends driven by the `lineate` integration inherit the same behavior automatically.

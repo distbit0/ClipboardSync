@@ -1,7 +1,11 @@
 import argparse
+import math
 import os
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import pyperclip
 import requests
@@ -17,6 +21,8 @@ MAX_NON_FILE_MESSAGE_BYTES = 3500
 SEND_RAW_WORKFLOW = "send_ntfy_raw"
 SEND_CONVERT_WORKFLOW = "send_ntfy_convert"
 SEND_URL_QUEUE_NAME = "clipboard_send_urls"
+NTFY_RATE_LIMIT_STATUS = 429
+MAX_RATE_LIMIT_BACKOFF_SECONDS = 60
 
 
 def _configure_logging():
@@ -67,22 +73,86 @@ def _show_desktop_error(message: str) -> None:
         logger.error(f"Failed to display desktop alert: {exc}")
 
 
+def _parse_retry_after_seconds(retry_after_value: str | None) -> int | None:
+    if not retry_after_value:
+        return None
+
+    stripped_value = retry_after_value.strip()
+    if not stripped_value:
+        return None
+
+    try:
+        return max(1, int(stripped_value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(stripped_value)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    retry_delay_seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+    return max(1, math.ceil(retry_delay_seconds))
+
+
+def _resolve_rate_limit_retry_delay_seconds(
+    response_headers, attempt_number: int
+) -> tuple[int, str]:
+    retry_after_value = None
+    if hasattr(response_headers, "get"):
+        retry_after_value = response_headers.get("Retry-After")
+
+    retry_delay_seconds = _parse_retry_after_seconds(retry_after_value)
+    if retry_delay_seconds is not None:
+        return retry_delay_seconds, "server Retry-After"
+
+    bounded_attempt_number = min(max(attempt_number - 1, 0), 6)
+    retry_delay_seconds = min(2**bounded_attempt_number, MAX_RATE_LIMIT_BACKOFF_SECONDS)
+    if retry_after_value:
+        return (
+            retry_delay_seconds,
+            f"invalid Retry-After {retry_after_value!r}; using exponential backoff",
+        )
+    return retry_delay_seconds, "missing Retry-After; using exponential backoff"
+
+
 def _send_plain_messages(api_url: str, payload_messages: list[str]) -> bool:
     total_messages = len(payload_messages)
     for message_index, payload_message in enumerate(payload_messages, start=1):
-        try:
-            logger.info(f"Sending message {message_index}/{total_messages} to {api_url}")
-            response = requests.post(
-                api_url,
-                data=payload_message.encode("utf-8"),
-                timeout=20,
-            )
-            logger.info("Sent notification payload.")
-        except Exception as request_exception:
-            logger.exception(f"Send failed: {request_exception}")
-            return False
+        attempt_number = 1
+        while True:
+            try:
+                logger.info(
+                    f"Sending message {message_index}/{total_messages} to {api_url} "
+                    f"(attempt {attempt_number})"
+                )
+                response = requests.post(
+                    api_url,
+                    data=payload_message.encode("utf-8"),
+                    timeout=20,
+                )
+            except Exception as request_exception:
+                logger.exception(f"Send failed: {request_exception}")
+                return False
 
-        if response.status_code != 200:
+            if response.status_code == 200:
+                logger.info("Sent notification payload.")
+                break
+
+            if response.status_code == NTFY_RATE_LIMIT_STATUS:
+                retry_delay_seconds, retry_reason = _resolve_rate_limit_retry_delay_seconds(
+                    getattr(response, "headers", {}),
+                    attempt_number,
+                )
+                logger.warning(
+                    "ntfy returned HTTP 429 for "
+                    f"message {message_index}/{total_messages}; "
+                    f"retrying in {retry_delay_seconds}s ({retry_reason})."
+                )
+                time.sleep(retry_delay_seconds)
+                attempt_number += 1
+                continue
+
             response_body_preview = response.text[:400].replace("\n", "\\n")
             logger.error(
                 "Failed to send notification. "

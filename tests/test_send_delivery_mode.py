@@ -28,6 +28,30 @@ def test_no_convert_sends_single_non_url_message(monkeypatch) -> None:
     assert captured_payloads == [b"hello world"]
 
 
+def test_send_plain_messages_retries_429_until_success(monkeypatch) -> None:
+    attempted_payloads: list[bytes] = []
+    sleep_durations: list[int] = []
+    responses = iter(
+        [
+            SimpleNamespace(status_code=429, text="slow down", headers={"Retry-After": "3"}),
+            SimpleNamespace(status_code=200, text="ok", headers={}),
+        ]
+    )
+
+    def fake_post(url, data, timeout):
+        assert url == "https://ntfy.sh/topic-name"
+        assert timeout == 20
+        attempted_payloads.append(data)
+        return next(responses)
+
+    monkeypatch.setattr(send.requests, "post", fake_post)
+    monkeypatch.setattr(send.time, "sleep", sleep_durations.append)
+
+    assert send._send_plain_messages("https://ntfy.sh/topic-name", ["hello world"]) is True
+    assert attempted_payloads == [b"hello world", b"hello world"]
+    assert sleep_durations == [3]
+
+
 def test_urls_only_conversion_routes_to_queue_delivery(monkeypatch) -> None:
     queue_calls: list[tuple[list[str], bool]] = []
 
@@ -176,6 +200,61 @@ def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_claim(monkeypatch) -> No
         ("https://ntfy.sh/topic-a", ["https://example.com/one"]),
         ("https://ntfy.sh/topic-b", ["https://example.com/two"]),
     ]
+
+
+def test_enqueue_and_send_url_jobs_retries_429_and_still_delivers(monkeypatch) -> None:
+    sleep_durations: list[int] = []
+    attempted_payloads: list[bytes] = []
+    responses = iter(
+        [
+            SimpleNamespace(status_code=429, text="slow down", headers={}),
+            SimpleNamespace(status_code=200, text="ok", headers={}),
+        ]
+    )
+
+    class DummyQueue:
+        def __init__(self):
+            self.jobs: list[dict] = []
+
+        def create_url_job(self, url, workflow, payload):
+            return {"url": url, "workflow": workflow, "payload": payload}
+
+        def enqueue_jobs(self, _queue_name, jobs):
+            self.jobs.extend(jobs)
+            return len(jobs)
+
+        def drain_queue(self, _queue_name, process_job):
+            outputs = []
+            for index, job in enumerate(self.jobs, start=1):
+                claimed = {
+                    "id": str(index),
+                    "url": job["url"],
+                    "workflow": job["workflow"],
+                    "payload": job["payload"],
+                }
+                outputs.append(process_job(claimed))
+            return outputs, "drained"
+
+    def fake_post(url, data, timeout):
+        assert url == "https://ntfy.sh/topic-name"
+        assert timeout == 20
+        attempted_payloads.append(data)
+        return next(responses)
+
+    dummy_lineate = SimpleNamespace(persistent_url_queue=DummyQueue())
+    monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
+    monkeypatch.setattr(send.requests, "post", fake_post)
+    monkeypatch.setattr(send.time, "sleep", sleep_durations.append)
+
+    delivered = send._enqueue_and_send_url_jobs(
+        dummy_lineate,
+        ["https://example.com/one"],
+        convert=False,
+    )
+
+    assert delivered == ["https://example.com/one"]
+    assert attempted_payloads == [b"https://example.com/one", b"https://example.com/one"]
+    assert sleep_durations == [1]
 
 
 def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) -> None:
