@@ -241,7 +241,7 @@ def _enqueue_and_send_url_jobs(
             return None
         return payload_url
 
-    delivered_urls, drain_status = lineate.persistent_url_queue.drain_queue(
+    delivered_urls, drain_status = lineate.drain_persistent_queue_with_batch_claims(
         queue_name, _process_claimed_job
     )
     if drain_status == "busy":

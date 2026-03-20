@@ -9,6 +9,15 @@ def _build_dummy_lineate(**overrides):
         "_rewrite_pending_playlist_jobs": lambda _queue_name: 0,
     }
     defaults.update(overrides)
+    if (
+        "drain_persistent_queue_with_batch_claims" not in defaults
+        and "persistent_url_queue" in defaults
+    ):
+        defaults["drain_persistent_queue_with_batch_claims"] = (
+            lambda queue_name, process_job: defaults["persistent_url_queue"].drain_queue(
+                queue_name, process_job
+            )
+        )
     return SimpleNamespace(**defaults)
 
 
@@ -209,6 +218,39 @@ def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_claim(monkeypatch) -> No
         ("https://ntfy.sh/topic-a", ["https://example.com/one"]),
         ("https://ntfy.sh/topic-b", ["https://example.com/two"]),
     ]
+
+
+def test_enqueue_and_send_url_jobs_uses_lineate_batch_drain_helper(monkeypatch) -> None:
+    helper_queue_names: list[str] = []
+    queued_jobs: list[dict] = []
+
+    class DummyQueue:
+        def create_url_job(self, url, workflow, payload):
+            job = {"url": url, "workflow": workflow, "payload": payload}
+            queued_jobs.append(job)
+            return job
+
+        def enqueue_jobs(self, _queue_name, jobs):
+            assert jobs == queued_jobs
+            return len(jobs)
+
+    def fake_batch_drain(queue_name, process_job):
+        helper_queue_names.append(queue_name)
+        return [process_job({"id": "1", **queued_jobs[0]})], "drained"
+
+    dummy_lineate = _build_dummy_lineate(
+        persistent_url_queue=DummyQueue(),
+        drain_persistent_queue_with_batch_claims=fake_batch_drain,
+    )
+    monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
+    monkeypatch.setattr(send, "_send_plain_messages", lambda _api_url, _payloads: True)
+
+    delivered = send._enqueue_and_send_url_jobs(
+        dummy_lineate, ["https://example.com/one"], convert=False
+    )
+
+    assert helper_queue_names == [send.SEND_URL_QUEUE_NAME]
+    assert delivered == ["https://example.com/one"]
 
 
 def test_enqueue_and_send_url_jobs_retries_429_and_still_delivers(monkeypatch) -> None:

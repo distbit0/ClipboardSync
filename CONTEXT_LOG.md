@@ -23,3 +23,7 @@
 ## 2026-03-20: lineate-owned URL batch normalization
 - `send.py` now delegates queue-bound URL batch normalization to `lineate` via `_expand_batch_urls(...)` and `_rewrite_pending_playlist_jobs(...)` instead of carrying its own notion of special URL shapes.
 - This keeps durable ntfy delivery aligned with `lineate` for playlist expansion and any future batch-boundary URL rewrites, rather than duplicating routing policy in two repos.
+
+## 2026-03-20: lineate-owned queue draining
+- `send.py` now also delegates queue execution strategy to `lineate.drain_persistent_queue_with_batch_claims(...)` instead of using the older one-job-at-a-time `persistent_url_queue.drain_queue(...)`.
+- This means `clipboard_send_urls` now matches `lineate_url_jobs`: one active worker process per queue, batched claims on disk, non-Twitter jobs processed in parallel, and Twitter status URLs kept serial with the existing pacing.
