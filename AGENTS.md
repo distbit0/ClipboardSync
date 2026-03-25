@@ -1,1 +1,1 @@
-/home/pimania/.codex/AGENTS.md
+- Do not duplicate logic already present in `lineate`; import or reuse the existing implementation there instead.
