@@ -9,6 +9,21 @@ def _build_dummy_lineate(**overrides):
         "_rewrite_pending_playlist_jobs": lambda _queue_name: 0,
     }
     defaults.update(overrides)
+    if "enqueue_url_jobs" not in defaults and "persistent_url_queue" in defaults:
+        def _enqueue_url_jobs(*, queue_name, workflow, payload, urls):
+            queued_urls = list(urls)
+            jobs = [
+                defaults["persistent_url_queue"].create_url_job(
+                    url,
+                    workflow=workflow,
+                    payload=payload,
+                )
+                for url in queued_urls
+            ]
+            added_count = defaults["persistent_url_queue"].enqueue_jobs(queue_name, jobs)
+            return queued_urls, added_count
+
+        defaults["enqueue_url_jobs"] = _enqueue_url_jobs
     if (
         "drain_persistent_queue_with_batch_claims" not in defaults
         and "persistent_url_queue" in defaults
@@ -396,37 +411,41 @@ def test_oversized_non_url_content_fails_and_alerts(monkeypatch) -> None:
     ]
 
 
-def test_enqueue_and_send_url_jobs_reuses_lineate_batch_normalization(monkeypatch) -> None:
-    queued_jobs: list[dict] = []
-    expanded_inputs: list[list[str]] = []
-    rewritten_queue_names: list[str] = []
+def test_enqueue_and_send_url_jobs_uses_lineate_enqueue_helper(monkeypatch) -> None:
+    enqueue_calls: list[dict] = []
+    queued_urls: list[str] = []
 
-    class DummyQueue:
-        def create_url_job(self, url, workflow, payload):
-            job = {"url": url, "workflow": workflow, "payload": payload}
-            queued_jobs.append(job)
-            return job
-
-        def enqueue_jobs(self, _queue_name, jobs):
-            assert jobs == queued_jobs
-            return len(jobs)
-
-        def drain_queue(self, _queue_name, process_job):
-            outputs = []
-            for index, job in enumerate(queued_jobs, start=1):
-                outputs.append(process_job({"id": str(index), **job}))
-            return outputs, "drained"
-
-    dummy_lineate = _build_dummy_lineate(
-        persistent_url_queue=DummyQueue(),
-        _expand_batch_urls=lambda urls: expanded_inputs.append(list(urls)) or [
+    def fake_enqueue_url_jobs(*, queue_name, workflow, payload, urls):
+        enqueue_calls.append(
+            {
+                "queue_name": queue_name,
+                "workflow": workflow,
+                "payload": payload,
+                "urls": list(urls),
+            }
+        )
+        queued_urls[:] = [
             "https://www.youtube.com/watch?v=video-one",
             "https://www.youtube.com/watch?v=video-two",
-        ],
-        _rewrite_pending_playlist_jobs=lambda queue_name: rewritten_queue_names.append(
-            queue_name
-        )
-        or 0,
+        ]
+        return list(queued_urls), len(queued_urls)
+
+    def fake_batch_drain(_queue_name, process_job):
+        return [
+            process_job(
+                {
+                    "id": str(index),
+                    "url": url,
+                    "workflow": send.SEND_RAW_WORKFLOW,
+                    "payload": {"convert": False},
+                }
+            )
+            for index, url in enumerate(queued_urls, start=1)
+        ], "drained"
+
+    dummy_lineate = _build_dummy_lineate(
+        enqueue_url_jobs=fake_enqueue_url_jobs,
+        drain_persistent_queue_with_batch_claims=fake_batch_drain,
     )
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
     monkeypatch.setattr(send, "_send_plain_messages", lambda _api_url, _payloads: True)
@@ -437,9 +456,15 @@ def test_enqueue_and_send_url_jobs_reuses_lineate_batch_normalization(monkeypatc
         convert=False,
     )
 
-    assert expanded_inputs == [["https://www.youtube.com/playlist?list=PL12345"]]
-    assert rewritten_queue_names == [send.SEND_URL_QUEUE_NAME]
-    assert [job["url"] for job in queued_jobs] == [
+    assert enqueue_calls == [
+        {
+            "queue_name": send.SEND_URL_QUEUE_NAME,
+            "workflow": send.SEND_RAW_WORKFLOW,
+            "payload": {"convert": False},
+            "urls": ["https://www.youtube.com/playlist?list=PL12345"],
+        }
+    ]
+    assert queued_urls == [
         "https://www.youtube.com/watch?v=video-one",
         "https://www.youtube.com/watch?v=video-two",
     ]

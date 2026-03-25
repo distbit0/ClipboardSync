@@ -27,3 +27,8 @@
 ## 2026-03-20: lineate-owned queue draining
 - `send.py` now also delegates queue execution strategy to `lineate.drain_persistent_queue_with_batch_claims(...)` instead of using the older one-job-at-a-time `persistent_url_queue.drain_queue(...)`.
 - This means `clipboard_send_urls` now matches `lineate_url_jobs`: one active worker process per queue, batched claims on disk, non-Twitter jobs processed in parallel, and Twitter status URLs kept serial with the existing pacing.
+
+## 2026-03-25: lineate-owned queue enqueueing
+- `send.py` now delegates queue insertion to `lineate.enqueue_url_jobs(...)` instead of rebuilding jobs and calling `persistent_url_queue.enqueue_jobs(...)` itself.
+- This fixes the missing desktop confirmation for queued URLs because the notification now lives at the shared enqueue boundary rather than only in `lineate`'s own queue-processing entrypoint.
+- Durable queue dedupe is now URL-only within `clipboard_send_urls`, so the same URL will not be stored twice even if one invocation asked for raw send and another asked for converted send.

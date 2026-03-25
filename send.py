@@ -192,19 +192,11 @@ def _enqueue_and_send_url_jobs(
     queue_name = SEND_URL_QUEUE_NAME
     workflow = SEND_CONVERT_WORKFLOW if convert else SEND_RAW_WORKFLOW
     job_payload = {"convert": convert}
-    normalized_urls = lineate._expand_batch_urls(urls)
-    lineate._rewrite_pending_playlist_jobs(queue_name)
-    jobs = [
-        lineate.persistent_url_queue.create_url_job(
-            url,
-            workflow=workflow,
-            payload=job_payload,
-        )
-        for url in normalized_urls
-    ]
-    added_count = lineate.persistent_url_queue.enqueue_jobs(queue_name, jobs)
-    logger.info(
-        f"Queue {queue_name}: enqueued {added_count} new URL(s); requested {len(normalized_urls)}."
+    lineate.enqueue_url_jobs(
+        queue_name=queue_name,
+        workflow=workflow,
+        payload=job_payload,
+        urls=urls,
     )
 
     def _process_claimed_job(job: dict[str, object]) -> str | None:
