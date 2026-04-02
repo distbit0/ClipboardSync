@@ -3,3 +3,4 @@ nohup.out
 *.log
 __pycache__/
 *.pyc
+**/node_modules/

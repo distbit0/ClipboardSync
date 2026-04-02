@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode
 
 import requests
 import websocket
@@ -20,8 +21,10 @@ PING_TIMEOUT_SECONDS = 10
 RECONNECT_DELAY_SECONDS = 5
 LOG_LEVEL_ENV = "LOG_LEVEL"
 WEBSOCKET_TRACE_ENV = "NTFY_WS_TRACE"
+RECEIVE_STATE_FILENAME = "receive_state.json"
 
 _ENV_PATH = Path(__file__).resolve().parent / ".env"
+_STATE_PATH = Path(__file__).resolve().parent / RECEIVE_STATE_FILENAME
 load_dotenv(dotenv_path=_ENV_PATH)
 
 
@@ -71,6 +74,48 @@ def _fetch_attachment_text(attachment_id: str) -> str:
     return response.text
 
 
+def _load_receive_state(state_path: Path = _STATE_PATH) -> dict[str, str]:
+    if not state_path.exists():
+        return {}
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.exception(f"Failed to load receive state from {state_path}.")
+        return {}
+
+    if not isinstance(state, dict):
+        logger.warning(f"Ignoring malformed receive state in {state_path}.")
+        return {}
+
+    return {
+        topic: message_id
+        for topic, message_id in state.items()
+        if isinstance(topic, str) and isinstance(message_id, str) and message_id
+    }
+
+
+def _load_last_processed_message_id(
+    topic: str, state_path: Path = _STATE_PATH
+) -> str | None:
+    return _load_receive_state(state_path).get(topic)
+
+
+def _store_last_processed_message_id(
+    topic: str, message_id: str, state_path: Path = _STATE_PATH
+) -> None:
+    state = _load_receive_state(state_path)
+    state[topic] = message_id
+    state_path.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+
+
+def _build_ws_url(topic: str, last_processed_message_id: str | None) -> str:
+    ws_url = f"wss://ntfy.sh/{topic}/ws"
+    if not last_processed_message_id:
+        return ws_url
+    return f"{ws_url}?{urlencode({'since': last_processed_message_id})}"
+
+
 def resolve_message_text(
     data: dict, fetch_attachment_text: Callable[[str], str]
 ) -> str | None:
@@ -88,7 +133,7 @@ def resolve_message_text(
     return fetch_attachment_text(attachment_id)
 
 
-def _handle_message(data: dict) -> None:
+def _handle_message(data: dict, topic: str) -> None:
     message_text = resolve_message_text(data, _fetch_attachment_text)
     if message_text is None:
         return
@@ -103,8 +148,12 @@ def _handle_message(data: dict) -> None:
         forceNoConvert=True,
     )
 
+    message_id = data.get("id")
+    if isinstance(message_id, str) and message_id:
+        _store_last_processed_message_id(topic, message_id)
 
-def _on_message(ws, message: str) -> None:
+
+def _on_message(ws, message: str, topic: str) -> None:
     try:
         data = json.loads(message)
     except json.JSONDecodeError:
@@ -113,7 +162,7 @@ def _on_message(ws, message: str) -> None:
         return
 
     try:
-        _handle_message(data)
+        _handle_message(data, topic)
     except Exception:
         logger.exception("Failed while handling message payload.")
         ws.close(status=1011, reason="handler error")
@@ -134,11 +183,16 @@ def _on_open(_ws) -> None:
 def _connect_loop(topic: str) -> None:
     ws = None
     while True:
-        ws_url = f"wss://ntfy.sh/{topic}/ws"
+        last_processed_message_id = _load_last_processed_message_id(topic)
+        ws_url = _build_ws_url(topic, last_processed_message_id)
+        if last_processed_message_id:
+            logger.info(f"Resuming from ntfy message {last_processed_message_id}.")
         logger.info(f"Connecting to {ws_url}")
         ws = websocket.WebSocketApp(
             ws_url,
-            on_message=_on_message,
+            on_message=lambda current_ws, message: _on_message(
+                current_ws, message, topic
+            ),
             on_error=_on_error,
             on_close=_on_close,
             on_open=_on_open,
