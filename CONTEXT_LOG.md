@@ -32,3 +32,8 @@
 - `send.py` now delegates queue insertion to `lineate.enqueue_url_jobs(...)` instead of rebuilding jobs and calling `persistent_url_queue.enqueue_jobs(...)` itself.
 - This fixes the missing desktop confirmation for queued URLs because the notification now lives at the shared enqueue boundary rather than only in `lineate`'s own queue-processing entrypoint.
 - Durable queue dedupe is now URL-only within `clipboard_send_urls`, so the same URL will not be stored twice even if one invocation asked for raw send and another asked for converted send.
+
+## 2026-04-03: Batched ntfy URL delivery
+- Queued URL sends no longer publish one ntfy message per URL. `send.py` now waits for a claimed queue batch to finish processing, preserves the ordered converted URLs, and greedily packs them into newline-delimited ntfy messages up to `MAX_NON_FILE_MESSAGE_BYTES`.
+- Queue jobs are only marked done after the ntfy POST for the batch containing them succeeds. If a batch send fails, every job in that unsent batch is requeued together.
+- ntfy publishing is now additionally serialized through a small on-disk send state file so separate `send.py` processes still respect `config.json` `ntfy.min_send_interval_seconds` between POST attempts.

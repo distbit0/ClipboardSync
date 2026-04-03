@@ -29,9 +29,9 @@ def _build_dummy_lineate(**overrides):
         and "persistent_url_queue" in defaults
     ):
         defaults["drain_persistent_queue_with_batch_claims"] = (
-            lambda queue_name, process_job: defaults["persistent_url_queue"].drain_queue(
-                queue_name, process_job
-            )
+            lambda queue_name, process_job, complete_batch: defaults[
+                "persistent_url_queue"
+            ].drain_queue(queue_name, process_job, complete_batch)
         )
     return SimpleNamespace(**defaults)
 
@@ -46,6 +46,7 @@ def test_no_convert_sends_single_non_url_message(monkeypatch) -> None:
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
     monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 0)
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "hello world")
 
     def fake_post(url, data, timeout):
@@ -79,6 +80,7 @@ def test_send_plain_messages_retries_429_until_success(monkeypatch) -> None:
 
     monkeypatch.setattr(send.requests, "post", fake_post)
     monkeypatch.setattr(send.time, "sleep", sleep_durations.append)
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 0)
 
     assert send._send_plain_messages("https://ntfy.sh/topic-name", ["hello world"]) is True
     assert attempted_payloads == [b"hello world", b"hello world"]
@@ -166,6 +168,7 @@ def test_send_notification_drains_pending_queue_before_non_url_send(monkeypatch)
     )
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 0)
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "hello world")
     monkeypatch.setattr(
         send, "_drain_pending_url_jobs", lambda lineate: drained_lineate_objects.append(lineate)
@@ -185,7 +188,7 @@ def test_send_notification_drains_pending_queue_before_non_url_send(monkeypatch)
     assert captured_payloads == [b"hello world"]
 
 
-def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_claim(monkeypatch) -> None:
+def test_enqueue_and_send_url_jobs_batches_multiple_urls_into_single_ntfy_message(monkeypatch) -> None:
     captured_payloads: list[tuple[str, list[str]]] = []
 
     class DummyQueue:
@@ -199,20 +202,84 @@ def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_claim(monkeypatch) -> No
             self.jobs.extend(jobs)
             return len(jobs)
 
-        def drain_queue(self, _queue_name, process_job):
-            outputs = []
-            for index, job in enumerate(self.jobs, start=1):
-                claimed = {
-                    "id": str(index),
-                    "url": job["url"],
-                    "workflow": job["workflow"],
-                    "payload": job["payload"],
-                }
-                outputs.append(process_job(claimed))
-            return outputs, "drained"
+        def mark_job_done(self, _queue_name, _job_id):
+            return None
+
+        def mark_job_failed(self, _queue_name, _job_id, **_kwargs):
+            raise AssertionError("mark_job_failed should not be called")
+
+    def fake_batch_drain(_queue_name, process_job, complete_batch):
+        processed_batch = [
+            (
+                {"id": str(index), **job},
+                process_job({"id": str(index), **job}),
+            )
+            for index, job in enumerate(dummy_lineate.persistent_url_queue.jobs, start=1)
+        ]
+        return complete_batch(_queue_name, processed_batch, set()), "drained"
+
+    dummy_lineate = _build_dummy_lineate(
+        persistent_url_queue=DummyQueue(),
+        drain_persistent_queue_with_batch_claims=fake_batch_drain,
+    )
+    monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-a")
+
+    def fake_send_plain_messages(api_url, payload_messages):
+        captured_payloads.append((api_url, payload_messages))
+        return True
+
+    monkeypatch.setattr(send, "_send_plain_messages", fake_send_plain_messages)
+
+    delivered = send._enqueue_and_send_url_jobs(
+        dummy_lineate,
+        ["https://example.com/one", "https://example.com/two"],
+        convert=False,
+    )
+
+    assert delivered == ["https://example.com/one", "https://example.com/two"]
+    assert captured_payloads == [
+        (
+            "https://ntfy.sh/topic-a",
+            ["https://example.com/one\nhttps://example.com/two"],
+        )
+    ]
+
+
+def test_enqueue_and_send_url_jobs_uses_fresh_topic_per_message_chunk(monkeypatch) -> None:
+    captured_payloads: list[tuple[str, list[str]]] = []
+
+    class DummyQueue:
+        def __init__(self):
+            self.jobs: list[dict] = []
+
+        def create_url_job(self, url, workflow, payload):
+            return {"url": url, "workflow": workflow, "payload": payload}
+
+        def enqueue_jobs(self, _queue_name, jobs):
+            self.jobs.extend(jobs)
+            return len(jobs)
+
+        def mark_job_done(self, _queue_name, _job_id):
+            return None
+
+        def mark_job_failed(self, _queue_name, _job_id, **_kwargs):
+            raise AssertionError("mark_job_failed should not be called")
 
     dummy_lineate = _build_dummy_lineate(persistent_url_queue=DummyQueue())
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-a")
+    monkeypatch.setattr(send, "MAX_NON_FILE_MESSAGE_BYTES", len("https://example.com/one"))
+
+    def fake_batch_drain(_queue_name, process_job, complete_batch):
+        processed_batch = [
+            (
+                {"id": str(index), **job},
+                process_job({"id": str(index), **job}),
+            )
+            for index, job in enumerate(dummy_lineate.persistent_url_queue.jobs, start=1)
+        ]
+        return complete_batch(_queue_name, processed_batch, set()), "drained"
+
+    dummy_lineate.drain_persistent_queue_with_batch_claims = fake_batch_drain
 
     def fake_send_plain_messages(api_url, payload_messages):
         captured_payloads.append((api_url, payload_messages))
@@ -249,9 +316,13 @@ def test_enqueue_and_send_url_jobs_uses_lineate_batch_drain_helper(monkeypatch) 
             assert jobs == queued_jobs
             return len(jobs)
 
-    def fake_batch_drain(queue_name, process_job):
+        def mark_job_done(self, _queue_name, _job_id):
+            return None
+
+    def fake_batch_drain(queue_name, process_job, complete_batch):
         helper_queue_names.append(queue_name)
-        return [process_job({"id": "1", **queued_jobs[0]})], "drained"
+        processed_batch = [({"id": "1", **queued_jobs[0]}, process_job({"id": "1", **queued_jobs[0]}))]
+        return complete_batch(queue_name, processed_batch, set()), "drained"
 
     dummy_lineate = _build_dummy_lineate(
         persistent_url_queue=DummyQueue(),
@@ -289,17 +360,11 @@ def test_enqueue_and_send_url_jobs_retries_429_and_still_delivers(monkeypatch) -
             self.jobs.extend(jobs)
             return len(jobs)
 
-        def drain_queue(self, _queue_name, process_job):
-            outputs = []
-            for index, job in enumerate(self.jobs, start=1):
-                claimed = {
-                    "id": str(index),
-                    "url": job["url"],
-                    "workflow": job["workflow"],
-                    "payload": job["payload"],
-                }
-                outputs.append(process_job(claimed))
-            return outputs, "drained"
+        def mark_job_done(self, _queue_name, _job_id):
+            return None
+
+        def mark_job_failed(self, _queue_name, _job_id, **_kwargs):
+            raise AssertionError("mark_job_failed should not be called")
 
     def fake_post(url, data, timeout):
         assert url == "https://ntfy.sh/topic-name"
@@ -311,6 +376,19 @@ def test_enqueue_and_send_url_jobs_retries_429_and_still_delivers(monkeypatch) -
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
     monkeypatch.setattr(send.requests, "post", fake_post)
     monkeypatch.setattr(send.time, "sleep", sleep_durations.append)
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 0)
+
+    def fake_batch_drain(_queue_name, process_job, complete_batch):
+        processed_batch = [
+            (
+                {"id": str(index), **job},
+                process_job({"id": str(index), **job}),
+            )
+            for index, job in enumerate(dummy_lineate.persistent_url_queue.jobs, start=1)
+        ]
+        return complete_batch(_queue_name, processed_batch, set()), "drained"
+
+    dummy_lineate.drain_persistent_queue_with_batch_claims = fake_batch_drain
 
     delivered = send._enqueue_and_send_url_jobs(
         dummy_lineate,
@@ -344,17 +422,11 @@ def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) ->
             self.jobs.extend(jobs)
             return len(jobs)
 
-        def drain_queue(self, _queue_name, process_job):
-            outputs = []
-            for index, job in enumerate(self.jobs, start=1):
-                claimed = {
-                    "id": str(index),
-                    "url": job["url"],
-                    "workflow": job["workflow"],
-                    "payload": job["payload"],
-                }
-                outputs.append(process_job(claimed))
-            return outputs, "drained"
+        def mark_job_done(self, _queue_name, _job_id):
+            return None
+
+        def mark_job_failed(self, _queue_name, _job_id, **_kwargs):
+            raise AssertionError("mark_job_failed should not be called")
 
     def fake_process_url(url, **_kwargs):
         converted = f"https://converted.example/{url.rsplit('/', 1)[-1]}"
@@ -366,8 +438,23 @@ def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) ->
         process_url=fake_process_url,
     )
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-x")
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 0)
+
+    def fake_batch_drain(_queue_name, process_job, complete_batch):
+        processed_batch = [
+            (
+                {"id": str(index), **job},
+                process_job({"id": str(index), **job}),
+            )
+            for index, job in enumerate(dummy_lineate.persistent_url_queue.jobs, start=1)
+        ]
+        return complete_batch(_queue_name, processed_batch, set()), "drained"
+
+    dummy_lineate.drain_persistent_queue_with_batch_claims = fake_batch_drain
     monkeypatch.setattr(
-        send, "_send_plain_messages", lambda _api_url, payloads: sent_payloads.append(payloads[0]) or True
+        send,
+        "_send_plain_messages",
+        lambda _api_url, payloads: sent_payloads.append(payloads[0]) or True,
     )
 
     delivered = send._enqueue_and_send_url_jobs(
@@ -380,8 +467,7 @@ def test_enqueue_and_send_url_jobs_uses_workflow_from_queued_job(monkeypatch) ->
     ]
     assert converted_urls == ["https://converted.example/needs-convert"]
     assert sent_payloads == [
-        "https://converted.example/needs-convert",
-        "https://example.com/raw",
+        "https://converted.example/needs-convert\nhttps://example.com/raw"
     ]
 
 
@@ -395,6 +481,7 @@ def test_oversized_non_url_content_fails_and_alerts(monkeypatch) -> None:
     monkeypatch.setattr(send, "_configure_logging", lambda: None)
     monkeypatch.setattr(send, "_load_lineate", lambda: dummy_lineate)
     monkeypatch.setattr(send, "_drain_pending_url_jobs", lambda _lineate: [])
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 0)
     monkeypatch.setattr(send.pyperclip, "paste", lambda: "this content is too large")
     monkeypatch.setattr(send, "MAX_NON_FILE_MESSAGE_BYTES", 8)
     monkeypatch.setattr(send, "_show_desktop_error", desktop_alerts.append)
@@ -430,22 +517,35 @@ def test_enqueue_and_send_url_jobs_uses_lineate_enqueue_helper(monkeypatch) -> N
         ]
         return list(queued_urls), len(queued_urls)
 
-    def fake_batch_drain(_queue_name, process_job):
-        return [
-            process_job(
+    def fake_batch_drain(_queue_name, process_job, complete_batch):
+        processed_batch = [
+            (
                 {
                     "id": str(index),
                     "url": url,
                     "workflow": send.SEND_RAW_WORKFLOW,
                     "payload": {"convert": False},
-                }
+                },
+                process_job(
+                    {
+                        "id": str(index),
+                        "url": url,
+                        "workflow": send.SEND_RAW_WORKFLOW,
+                        "payload": {"convert": False},
+                    }
+                ),
             )
             for index, url in enumerate(queued_urls, start=1)
-        ], "drained"
+        ]
+        return complete_batch(_queue_name, processed_batch, set()), "drained"
 
     dummy_lineate = _build_dummy_lineate(
         enqueue_url_jobs=fake_enqueue_url_jobs,
         drain_persistent_queue_with_batch_claims=fake_batch_drain,
+        persistent_url_queue=SimpleNamespace(
+            mark_job_done=lambda _queue_name, _job_id: None,
+            mark_job_failed=lambda _queue_name, _job_id, **_kwargs: None,
+        ),
     )
     monkeypatch.setenv("NTFY_SEND_TOPIC", "topic-name")
     monkeypatch.setattr(send, "_send_plain_messages", lambda _api_url, _payloads: True)
@@ -472,3 +572,28 @@ def test_enqueue_and_send_url_jobs_uses_lineate_enqueue_helper(monkeypatch) -> N
         "https://www.youtube.com/watch?v=video-one",
         "https://www.youtube.com/watch?v=video-two",
     ]
+
+
+def test_post_plain_message_waits_for_min_interval(monkeypatch, tmp_path) -> None:
+    attempted_payloads: list[bytes] = []
+    sleep_durations: list[float] = []
+    time_values = iter([101.0, 106.0])
+
+    def fake_post(url, data, timeout):
+        assert url == "https://ntfy.sh/topic-name"
+        assert timeout == 20
+        attempted_payloads.append(data)
+        return SimpleNamespace(status_code=200, text="ok")
+
+    monkeypatch.setattr(send, "_SEND_STATE_PATH", tmp_path / "send_state.json")
+    send._SEND_STATE_PATH.write_text('{"last_ntfy_post_at": 100.0}', encoding="utf-8")
+    monkeypatch.setattr(send, "_get_ntfy_min_send_interval_seconds", lambda: 5)
+    monkeypatch.setattr(send.requests, "post", fake_post)
+    monkeypatch.setattr(send.time, "sleep", sleep_durations.append)
+    monkeypatch.setattr(send.time, "time", lambda: next(time_values))
+
+    response = send._post_plain_message("https://ntfy.sh/topic-name", "hello world")
+
+    assert response.status_code == 200
+    assert attempted_payloads == [b"hello world"]
+    assert sleep_durations == [4.0]

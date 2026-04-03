@@ -1,4 +1,6 @@
 import argparse
+import fcntl
+import json
 import math
 import os
 import subprocess
@@ -6,6 +8,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 import pyperclip
 import requests
@@ -23,6 +26,10 @@ SEND_CONVERT_WORKFLOW = "send_ntfy_convert"
 SEND_URL_QUEUE_NAME = "clipboard_send_urls"
 NTFY_RATE_LIMIT_STATUS = 429
 MAX_RATE_LIMIT_BACKOFF_SECONDS = 60
+SEND_STATE_FILENAME = "send_state.json"
+SEND_STATE_LAST_POST_AT_KEY = "last_ntfy_post_at"
+
+_SEND_STATE_PATH = Path(__file__).resolve().parent / SEND_STATE_FILENAME
 
 
 def _configure_logging():
@@ -71,6 +78,64 @@ def _show_desktop_error(message: str) -> None:
         logger.error("notify-send not found; cannot display desktop alert.")
     except Exception as exc:
         logger.error(f"Failed to display desktop alert: {exc}")
+
+
+def _get_ntfy_min_send_interval_seconds() -> int:
+    ntfy_config = getConfig().get("ntfy", {})
+    min_send_interval_seconds = ntfy_config.get("min_send_interval_seconds")
+    if (
+        not isinstance(min_send_interval_seconds, int)
+        or min_send_interval_seconds < 0
+    ):
+        raise ValueError("config.json missing ntfy.min_send_interval_seconds.")
+    return min_send_interval_seconds
+
+
+def _load_send_state(state_file) -> dict[str, float]:
+    state_file.seek(0)
+    raw_state = state_file.read().strip()
+    if not raw_state:
+        return {}
+    try:
+        loaded_state = json.loads(raw_state)
+    except json.JSONDecodeError:
+        logger.exception(f"Failed to parse send state from {_SEND_STATE_PATH}.")
+        return {}
+    if not isinstance(loaded_state, dict):
+        logger.warning(f"Ignoring malformed send state in {_SEND_STATE_PATH}.")
+        return {}
+    return loaded_state
+
+
+def _store_send_state(state_file, state: dict[str, float]) -> None:
+    state_file.seek(0)
+    state_file.truncate()
+    json.dump(state, state_file, sort_keys=True)
+    state_file.flush()
+    os.fsync(state_file.fileno())
+
+
+def _post_plain_message(api_url: str, payload_message: str):
+    _SEND_STATE_PATH.touch(exist_ok=True)
+    with _SEND_STATE_PATH.open("r+", encoding="utf-8") as state_file:
+        fcntl.flock(state_file.fileno(), fcntl.LOCK_EX)
+        send_state = _load_send_state(state_file)
+        min_send_interval_seconds = _get_ntfy_min_send_interval_seconds()
+        last_post_at = send_state.get(SEND_STATE_LAST_POST_AT_KEY)
+        if isinstance(last_post_at, (int, float)):
+            wait_seconds = last_post_at + min_send_interval_seconds - time.time()
+            if wait_seconds > 0:
+                logger.info(f"Waiting {wait_seconds:.1f}s before next ntfy publish.")
+                time.sleep(wait_seconds)
+        response = requests.post(
+            api_url,
+            data=payload_message.encode("utf-8"),
+            timeout=20,
+        )
+        send_state[SEND_STATE_LAST_POST_AT_KEY] = time.time()
+        _store_send_state(state_file, send_state)
+        fcntl.flock(state_file.fileno(), fcntl.LOCK_UN)
+        return response
 
 
 def _parse_retry_after_seconds(retry_after_value: str | None) -> int | None:
@@ -126,11 +191,7 @@ def _send_plain_messages(api_url: str, payload_messages: list[str]) -> bool:
                     f"Sending message {message_index}/{total_messages} to {api_url} "
                     f"(attempt {attempt_number})"
                 )
-                response = requests.post(
-                    api_url,
-                    data=payload_message.encode("utf-8"),
-                    timeout=20,
-                )
+                response = _post_plain_message(api_url, payload_message)
             except Exception as request_exception:
                 logger.exception(f"Send failed: {request_exception}")
                 return False
@@ -172,18 +233,53 @@ def _resolve_api_url_from_env() -> str | None:
     return f"https://ntfy.sh/{topic_name}"
 
 
-def _send_single_url_payload(api_url: str, payload_url: str) -> bool:
-    payload_size = len(payload_url.encode("utf-8"))
-    if payload_size > MAX_NON_FILE_MESSAGE_BYTES:
-        logger.error(
-            "URL payload exceeds non-file message limit "
-            f"({payload_size}>{MAX_NON_FILE_MESSAGE_BYTES}); aborting."
-        )
-        _show_desktop_error(
-            "A URL payload exceeded the message limit; it remains queued for retry."
-        )
-        return False
-    return _send_plain_messages(api_url, [payload_url])
+def _require_claimed_job_id(job: dict[str, object]) -> str:
+    job_id = job.get("id")
+    if not isinstance(job_id, str) or not job_id:
+        raise ValueError("Claimed queue job is missing a valid id.")
+    return job_id
+
+
+def _mark_claimed_job_failed(
+    lineate,
+    queue_name: str,
+    job: dict[str, object],
+    failed_job_ids_this_run: set[str],
+) -> None:
+    job_id = _require_claimed_job_id(job)
+    failed_job_ids_this_run.add(job_id)
+    lineate.persistent_url_queue.mark_job_failed(
+        queue_name,
+        job_id,
+        requeue_front=False,
+    )
+
+
+def _batch_payload_jobs(
+    payload_jobs: list[tuple[dict[str, object], str]],
+) -> list[list[tuple[dict[str, object], str]]]:
+    batched_payload_jobs: list[list[tuple[dict[str, object], str]]] = []
+    current_batch: list[tuple[dict[str, object], str]] = []
+    current_batch_size = 0
+    for payload_job in payload_jobs:
+        _, payload_message = payload_job
+        payload_size = len(payload_message.encode("utf-8"))
+        if payload_size > MAX_NON_FILE_MESSAGE_BYTES:
+            raise ValueError(
+                "URL payload exceeds non-file message limit "
+                f"({payload_size}>{MAX_NON_FILE_MESSAGE_BYTES})."
+            )
+        separator_size = 1 if current_batch else 0
+        if current_batch and current_batch_size + separator_size + payload_size > MAX_NON_FILE_MESSAGE_BYTES:
+            batched_payload_jobs.append(current_batch)
+            current_batch = []
+            current_batch_size = 0
+            separator_size = 0
+        current_batch.append(payload_job)
+        current_batch_size += separator_size + payload_size
+    if current_batch:
+        batched_payload_jobs.append(current_batch)
+    return batched_payload_jobs
 
 
 def _enqueue_and_send_url_jobs(
@@ -211,10 +307,6 @@ def _enqueue_and_send_url_jobs(
             )
             return None
 
-        api_url = _resolve_api_url_from_env()
-        if not api_url:
-            return None
-
         payload_url = queued_url
         if queued_workflow == SEND_CONVERT_WORKFLOW:
             payload_url = lineate.process_url(
@@ -228,13 +320,77 @@ def _enqueue_and_send_url_jobs(
             if not payload_url:
                 logger.error(f"URL conversion returned no result for {queued_url}.")
                 return None
-
-        if not _send_single_url_payload(api_url, payload_url):
-            return None
         return payload_url
 
+    def _complete_processed_batch(
+        queue_name: str,
+        processed_batch: list[tuple[dict[str, object], str | None]],
+        failed_job_ids_this_run: set[str],
+    ) -> list[str]:
+        successful_payload_jobs: list[tuple[dict[str, object], str]] = []
+        for job, payload_url in processed_batch:
+            if not payload_url:
+                _mark_claimed_job_failed(
+                    lineate,
+                    queue_name,
+                    job,
+                    failed_job_ids_this_run,
+                )
+                continue
+            payload_size = len(payload_url.encode("utf-8"))
+            if payload_size > MAX_NON_FILE_MESSAGE_BYTES:
+                logger.error(
+                    "URL payload exceeds non-file message limit "
+                    f"({payload_size}>{MAX_NON_FILE_MESSAGE_BYTES}); aborting."
+                )
+                _show_desktop_error(
+                    "A URL payload exceeded the message limit; it remains queued for retry."
+                )
+                _mark_claimed_job_failed(
+                    lineate,
+                    queue_name,
+                    job,
+                    failed_job_ids_this_run,
+                )
+                continue
+            successful_payload_jobs.append((job, payload_url))
+
+        delivered_urls: list[str] = []
+        for payload_batch in _batch_payload_jobs(successful_payload_jobs):
+            api_url = _resolve_api_url_from_env()
+            if not api_url:
+                for job, _ in payload_batch:
+                    _mark_claimed_job_failed(
+                        lineate,
+                        queue_name,
+                        job,
+                        failed_job_ids_this_run,
+                    )
+                continue
+            payload_message = "\n".join(
+                payload_url for _, payload_url in payload_batch
+            )
+            if not _send_plain_messages(api_url, [payload_message]):
+                for job, _ in payload_batch:
+                    _mark_claimed_job_failed(
+                        lineate,
+                        queue_name,
+                        job,
+                        failed_job_ids_this_run,
+                    )
+                continue
+            for job, payload_url in payload_batch:
+                lineate.persistent_url_queue.mark_job_done(
+                    queue_name,
+                    _require_claimed_job_id(job),
+                )
+                delivered_urls.append(payload_url)
+        return delivered_urls
+
     delivered_urls, drain_status = lineate.drain_persistent_queue_with_batch_claims(
-        queue_name, _process_claimed_job
+        queue_name,
+        _process_claimed_job,
+        _complete_processed_batch,
     )
     if drain_status == "busy":
         logger.info(

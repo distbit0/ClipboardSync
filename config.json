@@ -1,3 +1,6 @@
 {
-    "convertLinksDir": "/home/pimania/dev/lineate/src"
+    "convertLinksDir": "/home/pimania/dev/lineate/src",
+    "ntfy": {
+        "min_send_interval_seconds": 5
+    }
 }
